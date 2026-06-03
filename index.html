@@ -1,51 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithCustomToken, 
-  signInAnonymously, 
-  onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  getFirestore, 
-  collection, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc,
-  deleteDoc 
-} from 'firebase/firestore';
-import { 
-  Hash, 
-  Plus, 
-  UserPlus, 
-  Settings, 
-  Send, 
-  MessageSquare, 
-  Users, 
-  Copy, 
-  Check,
-  X,
-  Search,
-  Loader2,
-  Sparkles,
-  ShieldAlert,
-  Upload,
-  Image as ImageIcon,
-  Trash2,
-  Tag,
-  Zap,
-  Shield,
-  Eye,
-  Lock,
-  Mail,
-  Smartphone,
-  ChevronRight,
-  AtSign
-} from 'lucide-react';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, updateDoc } from 'firebase/firestore';
+import { Hash, Plus, UserPlus, Settings, Send, MessageSquare, Users, Copy, Check, X, Search, Loader2, Sparkles, ShieldAlert, Upload, Image as ImageIcon, Trash2, Tag, Zap, Shield, Eye, Lock, Mail, Smartphone, ChevronRight, AtSign } from 'lucide-react';
 
 // --- Firebase 초기화 (컴포넌트 외부) ---
+// 실제 환경(GitHub Pages 등)에 배포할 때는 __firebase_config 대신 본인의 Firebase Config 객체를 넣으면 됩니다.
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -58,87 +18,67 @@ const COLL_COMMUNITIES = 'discord_communities';
 const COLL_MESSAGES = 'discord_messages';
 const COLL_FRIENDS = 'discord_friends';
 
-// 도우미 함수: 고유 ID 생성 (랜덤 문자열)
+// 도우미 함수: 고유 ID 생성 및 랜덤 컬러
 const generateShortId = () => Math.random().toString(36).substring(2, 8).toLowerCase();
 const generateRandomColor = () => `hsl(${Math.floor(Math.random() * 360)}, 70%, 60%)`;
 
-// 기본 아바타/서버 이모지 리스트
 const PRESET_EMOJIS = ['👾', '🐱', '🦊', '🐼', '🐸', '🦄', '🐝', '🦖', '🍿', '🚀', '⭐', '🎈'];
 const COMMUNITY_EMOJIS = ['🏰', '🎮', '🛸', '🍕', '⛺', '🎨', '🎸', '⚽', '🎒', '🧩', '📣', '💎'];
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [usersInfo, setUsersInfo] = useState({}); // 모든 유저 정보 캐싱
-  
+  const [usersInfo, setUsersInfo] = useState({});
+
   // 데이터 상태
   const [communities, setCommunities] = useState([]);
   const [friends, setFriends] = useState([]);
   const [allMessages, setAllMessages] = useState([]);
-  
+
   // UI 상태
-  const [activeView, setActiveView] = useState('dms'); // 'dms' 또는 'community'
-  const [activeTargetId, setActiveTargetId] = useState(null); // DM이면 친구ID, 커뮤니티면 커뮤니티ID
+  const [activeView, setActiveView] = useState('dms');
+  const [activeTargetId, setActiveTargetId] = useState(null);
   const [messageInput, setMessageInput] = useState('');
   
-  // 종합 사용자 설정 모달 상태
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [settingsTab, setSettingsTab] = useState('account'); // 'account', 'profile', 'nitro'
-  
-  // 모달 상태
+  const [settingsTab, setSettingsTab] = useState('account');
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [showCreateCommunityModal, setShowCreateCommunityModal] = useState(false);
-  const [showServerModal, setShowServerModal] = useState(false); // 서버 정보 수정 모달
-  const [showNitroModal, setShowNitroModal] = useState(false); // 니트로 가입 안내 모달
-  const [showNitroAlert, setShowNitroAlert] = useState(false); // GIF 사용 불가 경고 모달
-  const [showBoostAlert, setShowBoostAlert] = useState(false); // 부스트 2회 미만 태그 잠금 안내 모달
-  
-  // 입력 폼 상태
+  const [showServerModal, setShowServerModal] = useState(false);
+  const [showNitroModal, setShowNitroModal] = useState(false);
+  const [showNitroAlert, setShowNitroAlert] = useState(false);
+  const [showBoostAlert, setShowBoostAlert] = useState(false);
+
+  // 폼 상태
   const [newCommunityName, setNewCommunityName] = useState('');
   const [friendUsernameInput, setFriendUsernameInput] = useState('');
   const [copied, setCopied] = useState(false);
   const [alertMessage, setAlertMessage] = useState(null);
 
-  // 내 프로필 편집 상태 (종합 모달 내 양방향 바인딩용)
-  const [nicknameInput, setNicknameInput] = useState(''); 
-  const [usernameInput, setUsernameInput] = useState(''); 
-  const [statusInput, setStatusInput] = useState(''); 
-  const [selectedEmoji, setSelectedEmoji] = useState('👾'); 
-  const [customColor, setCustomColor] = useState('#6366f1'); 
-  const [customPhotoURL, setCustomPhotoURL] = useState(''); // 커스텀 GIF/이미지 프로필 URL
-  const [selectedServerTagId, setSelectedServerTagId] = useState(''); // 장착할 서버 태그 ID
+  // 내 프로필 상태
+  const [nicknameInput, setNicknameInput] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [statusInput, setStatusInput] = useState('');
+  const [selectedEmoji, setSelectedEmoji] = useState('👾');
+  const [customColor, setCustomColor] = useState('#6366f1');
+  const [customPhotoURL, setCustomPhotoURL] = useState('');
+  const [selectedServerTagId, setSelectedServerTagId] = useState('');
 
-  // 서버 프로필 편집 상태
+  // 서버 설정 상태
   const [serverNameInput, setServerNameInput] = useState('');
   const [serverEmojiInput, setServerEmojiInput] = useState('🏰');
   const [serverColorInput, setServerColorInput] = useState('#6366f1');
-  const [serverPhotoURL, setServerPhotoURL] = useState(''); // 서버 커스텀 아이콘 URL
-  const [serverTagInput, setServerTagInput] = useState(''); // 서버 태그 내용
+  const [serverPhotoURL, setServerPhotoURL] = useState('');
+  const [serverTagInput, setServerTagInput] = useState('');
 
-  // Tenor GIF 상태 (채팅 전송용)
+  // Tenor GIF 상태
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [gifSearch, setGifSearch] = useState('');
   const [gifResults, setGifResults] = useState([]);
   const [loadingGifs, setLoadingGifs] = useState(false);
 
-  // 프로필 설정 모달용 Tenor GIF 검색 상태
-  const [showProfileGifPicker, setShowProfileGifPicker] = useState(false);
-  const [profileGifSearch, setProfileGifSearch] = useState('');
-  const [profileGifResults, setProfileGifResults] = useState([]);
-  const [loadingProfileGifs, setLoadingProfileGifs] = useState(false);
-
-  // 서버 설정 모달용 Tenor GIF 검색 상태
-  const [showServerGifPicker, setShowServerGifPicker] = useState(false);
-  const [serverGifSearch, setServerGifSearch] = useState('');
-  const [serverGifResults, setServerGifResults] = useState([]);
-  const [loadingServerGifs, setLoadingServerGifs] = useState(false);
-
   const messagesEndRef = useRef(null);
   const gifSearchTimeout = useRef(null);
-  const profileGifSearchTimeout = useRef(null);
-  const serverGifSearchTimeout = useRef(null);
-  const fileInputRef = useRef(null);
-  const serverFileInputRef = useRef(null);
 
   // --- 1. 인증 및 내 프로필 설정 ---
   useEffect(() => {
@@ -154,7 +94,7 @@ export default function App() {
       }
     };
     initAuth();
-
+    
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
@@ -165,19 +105,17 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    // 공용 경로 생성기 (룰 1 준수)
     const getPublicRef = (collName) => collection(db, 'artifacts', appId, 'public', 'data', collName);
     const getPrivateRef = (collName) => collection(db, 'artifacts', appId, 'users', user.uid, collName);
 
-    // 2-1. 전체 유저 목록 구독
+    // 유저 목록
     const unsubUsers = onSnapshot(getPublicRef(COLL_USERS), (snapshot) => {
       const usersData = {};
       snapshot.forEach(doc => {
         usersData[doc.id] = { id: doc.id, ...doc.data() };
       });
       setUsersInfo(usersData);
-      
-      // 내 프로필이 없으면 새 프로필 생성 및 저장
+
       if (!usersData[user.uid]) {
         const shortId = generateShortId();
         const newProfile = {
@@ -186,26 +124,25 @@ export default function App() {
           color: generateRandomColor(),
           emoji: PRESET_EMOJIS[Math.floor(Math.random() * PRESET_EMOJIS.length)],
           status: '안녕하세요! 디스코드에 오신 것을 환영합니다.',
-          isNitro: false, // 기본값 니트로 미구독
-          photoURL: '', 
-          selectedServerTagId: '', // 장착된 서버 태그 정보 초기화
+          isNitro: false,
+          photoURL: '',
+          selectedServerTagId: '',
           createdAt: Date.now()
         };
         setDoc(doc(getPublicRef(COLL_USERS), user.uid), newProfile);
       } else {
-        const currentProfile = usersData[user.uid];
-        setProfile(currentProfile);
+        setProfile(usersData[user.uid]);
       }
     }, (err) => console.error("Users 구독 에러", err));
 
-    // 2-2. 커뮤니티 목록 구독
+    // 서버 목록
     const unsubCommunities = onSnapshot(getPublicRef(COLL_COMMUNITIES), (snapshot) => {
       const commData = [];
       snapshot.forEach(doc => commData.push({ id: doc.id, ...doc.data() }));
       setCommunities(commData);
     }, (err) => console.error("Communities 구독 에러", err));
 
-    // 2-3. 메시지 전체 목록 구독
+    // 메시지 목록 (메모리 정렬)
     const unsubMessages = onSnapshot(getPublicRef(COLL_MESSAGES), (snapshot) => {
       const msgs = [];
       snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
@@ -213,7 +150,7 @@ export default function App() {
       setAllMessages(msgs);
     }, (err) => console.error("Messages 구독 에러", err));
 
-    // 2-4. 내 친구 목록 구독 (Private)
+    // 친구 목록
     const unsubFriends = onSnapshot(getPrivateRef(COLL_FRIENDS), (snapshot) => {
       const friendData = [];
       snapshot.forEach(doc => friendData.push({ id: doc.id, ...doc.data() }));
@@ -233,19 +170,16 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, activeTargetId]);
 
-  // --- 3. Tenor GIF 가져오기 (채팅용, 프로필용, 서버용 개별 구현) ---
-  const fetchGifs = async (query = '', type = 'chat') => {
-    if (type === 'profile') setLoadingProfileGifs(true);
-    else if (type === 'server') setLoadingServerGifs(true);
-    else setLoadingGifs(true);
-
+  // --- 3. Tenor GIF 가져오기 ---
+  const fetchGifs = async (query = '') => {
+    setLoadingGifs(true);
     try {
       const limit = 16;
       const apiKey = 'LIVDSRZULELA';
       const baseUrl = query 
-        ? `https://g.tenor.com/v1/search?q=${encodeURIComponent(query)}&key=${apiKey}&limit=${limit}&contentfilter=high`
+        ? `https://g.tenor.com/v1/search?q=${encodeURIComponent(query)}&key=${apiKey}&limit=${limit}&contentfilter=high` 
         : `https://g.tenor.com/v1/trending?key=${apiKey}&limit=${limit}&contentfilter=high`;
-
+      
       const response = await fetch(baseUrl);
       if (response.ok) {
         const data = await response.json();
@@ -254,21 +188,12 @@ export default function App() {
           url: res.media[0]?.gif?.url,
           preview: res.media[0]?.tinygif?.url || res.media[0]?.gif?.url
         })).filter(g => g.url) || [];
-        
-        if (type === 'profile') {
-          setProfileGifResults(gifs);
-        } else if (type === 'server') {
-          setServerGifResults(gifs);
-        } else {
-          setGifResults(gifs);
-        }
+        setGifResults(gifs);
       }
     } catch (error) {
       console.error("GIF 가져오기 실패", error);
     } finally {
-      if (type === 'profile') setLoadingProfileGifs(false);
-      else if (type === 'server') setLoadingServerGifs(false);
-      else setLoadingGifs(false);
+      setLoadingGifs(false);
     }
   };
 
@@ -277,71 +202,13 @@ export default function App() {
     setGifSearch(value);
     if (gifSearchTimeout.current) clearTimeout(gifSearchTimeout.current);
     gifSearchTimeout.current = setTimeout(() => {
-      fetchGifs(value, 'chat');
+      fetchGifs(value);
     }, 500);
   };
 
-  const handleProfileGifSearchChange = (e) => {
-    const value = e.target.value;
-    setProfileGifSearch(value);
-    if (profileGifSearchTimeout.current) clearTimeout(profileGifSearchTimeout.current);
-    profileGifSearchTimeout.current = setTimeout(() => {
-      fetchGifs(value, 'profile');
-    }, 500);
-  };
-
-  const handleServerGifSearchChange = (e) => {
-    const value = e.target.value;
-    setServerGifSearch(value);
-    if (serverGifSearchTimeout.current) clearTimeout(serverGifSearchTimeout.current);
-    serverGifSearchTimeout.current = setTimeout(() => {
-      fetchGifs(value, 'server');
-    }, 500);
-  };
-
-  // --- 파일 업로드 처리 ---
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const limitSize = 800 * 1024;
-    if (file.size > limitSize) {
-      setAlertMessage("안정적인 저장을 위해 800KB 이하의 GIF 또는 이미지 파일만 선택해 주세요.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setCustomPhotoURL(reader.result); 
-      setSelectedEmoji(''); 
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleServerFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const limitSize = 800 * 1024;
-    if (file.size > limitSize) {
-      setAlertMessage("안정적인 저장을 위해 800KB 이하의 GIF 또는 이미지 파일만 선택해 주세요.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setServerPhotoURL(reader.result); 
-      setServerEmojiInput(''); 
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // 공용 아바타 렌더러 함수
+  // --- 렌더러 함수들 ---
   const renderAvatar = (uInfo, sizeClass = "w-9 h-9", textSizeClass = "text-xl", borderClass = "", showStatus = false) => {
     const defaultColor = uInfo?.color || '#6366f1';
-    const isNitroUser = uInfo?.isNitro;
-    const nitroRing = isNitroUser ? 'ring-2 ring-pink-500 ring-offset-2 ring-offset-[#2b2d31]' : '';
-
     let avatarEl = null;
 
     if (uInfo?.photoURL) {
@@ -349,107 +216,81 @@ export default function App() {
         <img 
           src={uInfo.photoURL} 
           alt="avatar" 
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            e.target.style.display = 'none';
-          }}
+          className="w-full h-full object-cover" 
+          onError={(e) => { e.target.style.display = 'none'; }} 
         />
       );
     } else {
-      avatarEl = <span className="select-none">{uInfo?.emoji || '👾'}</span>;
+      avatarEl = <span>{uInfo?.emoji || '👾'}</span>;
     }
 
     return (
-      <div className="relative flex-shrink-0">
-        <div 
-          className={`relative ${sizeClass} ${nitroRing} ${borderClass} rounded-full overflow-hidden shadow-md bg-[#1e1f22] flex items-center justify-center ${textSizeClass} text-white`}
-          style={{ backgroundColor: uInfo?.photoURL ? '#1e1f22' : defaultColor }}
-        >
-          {avatarEl}
-        </div>
-        {/* 상태 표시 아이콘 - 디스코드 바쁨(DND) 마크처럼 렌더링 */}
+      <div className={`relative flex-shrink-0 ${sizeClass} ${borderClass} rounded-full flex items-center justify-center text-white ${textSizeClass} shadow-sm overflow-hidden`} style={{ backgroundColor: uInfo?.photoURL ? 'transparent' : defaultColor }}>
+        {avatarEl}
         {showStatus && (
-          <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-[#f23f43] rounded-full border-[3px] border-[#2b2d31] flex items-center justify-center">
-            <div className="w-1.5 h-[2px] bg-white rounded-full"></div>
-          </div>
+          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-[#2b2d31] rounded-full z-10"></div>
         )}
       </div>
     );
   };
 
-  // 공용 서버 아이콘 렌더러 함수
   const renderServerIcon = (serverInfo, sizeClass = "w-12 h-12", textSizeClass = "text-xl", roundedClass = "rounded-[24px]") => {
     const defaultColor = serverInfo?.color || '#6366f1';
-
     if (serverInfo?.photoURL) {
       return (
-        <div className={`relative flex-shrink-0 ${sizeClass} ${roundedClass} overflow-hidden shadow-md bg-[#1e1f22]`}>
-          <img 
-            src={serverInfo.photoURL} 
-            alt="server icon" 
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              e.target.style.display = 'none';
-            }}
-          />
-        </div>
+        <img src={serverInfo.photoURL} alt="icon" className={`${sizeClass} ${roundedClass} object-cover`} onError={(e) => { e.target.style.display = 'none'; }} />
       );
     }
-
     return (
-      <div 
-        className={`flex-shrink-0 ${sizeClass} ${roundedClass} flex items-center justify-center ${textSizeClass} text-white font-bold shadow-md transition-all select-none`}
-        style={{ backgroundColor: defaultColor }}
-      >
+      <div className={`${sizeClass} ${roundedClass} flex items-center justify-center text-white ${textSizeClass} shadow-sm transition-all duration-200`} style={{ backgroundColor: defaultColor }}>
         {serverInfo?.emoji || serverInfo?.name?.substring(0, 1).toUpperCase() || '💬'}
       </div>
     );
   };
 
-  // 서버 태그(뱃지) 렌더러 함수
   const renderServerTagBadge = (serverTagId) => {
     if (!serverTagId) return null;
     const targetServer = communities.find(c => c.id === serverTagId);
     if (!targetServer || !targetServer.tag) return null;
-
     return (
-      <span className="inline-flex items-center gap-1 bg-[#1e1f22] border border-pink-500/30 text-pink-400 text-[10px] px-1.5 py-0.5 rounded-md font-bold tracking-wider select-none shadow">
-        <span>{targetServer.emoji || '🏰'}</span>
-        <span>{targetServer.tag}</span>
+      <span className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#1e1f22] border border-[#3f4147] text-gray-300">
+        {targetServer.emoji || '🏰'} {targetServer.tag}
       </span>
     );
   };
 
-  // 활성화된 서버 태그용 리스트 목록 (부스트 2회 이상 달성한 서버들)
   const availableServerTags = useMemo(() => {
     return communities.filter(c => (c.boosts || 0) >= 2 && c.tag);
   }, [communities]);
 
   // --- 액션 핸들러 ---
-
   const copyMyUsername = () => {
     if (!profile) return;
     navigator.clipboard.writeText(profile.username).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+       // iFrame fallback
+       const el = document.createElement('textarea');
+       el.value = profile.username;
+       document.body.appendChild(el);
+       el.select();
+       document.execCommand('copy');
+       document.body.removeChild(el);
+       setCopied(true);
+       setTimeout(() => setCopied(false), 2000);
     });
   };
 
-  const validateUsername = (uname) => {
-    return /^[a-zA-Z0-9._]+$/.test(uname);
-  };
-
-  // 친구 추가
   const handleAddFriend = async (e) => {
     e.preventDefault();
     const searchTarget = friendUsernameInput.trim().toLowerCase();
     if (!user || !searchTarget) return;
-
     if (profile && profile.username.toLowerCase() === searchTarget) {
       setAlertMessage("자기 자신을 친구로 추가할 수 없습니다.");
       return;
     }
-    
+
     const foundFriend = Object.values(usersInfo).find(
       (u) => u.username && u.username.toLowerCase() === searchTarget
     );
@@ -470,105 +311,43 @@ export default function App() {
     
     setFriendUsernameInput('');
     setShowAddFriendModal(false);
+    setAlertMessage(`성공적으로 ${foundFriend.name}님을 친구로 추가했습니다!`);
   };
 
-  // 커뮤니티(서버) 만들기
   const handleCreateCommunity = async (e) => {
     e.preventDefault();
     if (!user || !newCommunityName.trim()) return;
-
     const commRef = collection(db, 'artifacts', appId, 'public', 'data', COLL_COMMUNITIES);
     await addDoc(commRef, {
       name: newCommunityName.trim(),
       ownerId: user.uid,
       emoji: COMMUNITY_EMOJIS[Math.floor(Math.random() * COMMUNITY_EMOJIS.length)],
       color: '#6366f1',
-      photoURL: '', 
-      tag: '', 
-      boosts: 0, 
+      photoURL: '',
+      tag: '',
+      boosts: 0,
       createdAt: Date.now()
     });
-
     setNewCommunityName('');
     setShowCreateCommunityModal(false);
   };
 
-  // 커뮤니티 서버 정보 수정 (커스텀 아이콘, 부스트 기반 태그 기능 포함)
-  const handleUpdateServer = async (e) => {
-    e.preventDefault();
-    if (!user || !activeTargetId) return;
-
-    const currentServer = communities.find(c => c.id === activeTargetId);
-    if (!currentServer) return;
-
-    const serverDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLL_COMMUNITIES, activeTargetId);
-    
-    const boostCount = currentServer.boosts || 0;
-    let finalTag = currentServer.tag || '';
-
-    // 부스트가 2회 이상인 경우에만 태그 변경 적용 가능
-    if (serverTagInput.trim()) {
-      if (boostCount >= 2) {
-        finalTag = serverTagInput.trim();
-      } else {
-        setShowBoostAlert(true);
-        return;
-      }
-    } else {
-      finalTag = ''; // 비우는 것은 상시 가능
-    }
-
-    await updateDoc(serverDocRef, {
-      name: serverNameInput.trim(),
-      emoji: serverEmojiInput,
-      color: serverColorInput,
-      photoURL: serverPhotoURL,
-      tag: finalTag
-    });
-
-    setShowServerModal(false);
-  };
-
-  // 서버 부스트 올리기 액션
-  const handleBoostServer = async () => {
-    if (!user || !activeTargetId) return;
-    const currentServer = communities.find(c => c.id === activeTargetId);
-    if (!currentServer) return;
-
-    const serverDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLL_COMMUNITIES, activeTargetId);
-    const newBoostCount = (currentServer.boosts || 0) + 1;
-
-    await updateDoc(serverDocRef, {
-      boosts: newBoostCount
-    });
-
-    setAlertMessage(`이 서버를 성공적으로 부스트했습니다! 현재 부스트 횟수: ${newBoostCount}회 ⚡`);
-  };
-
-  // 내 프로필 정보 통합 변경 사항 저장 (계정 및 프로필 통합 관리)
   const handleSaveProfileChanges = async (e) => {
     if (e) e.preventDefault();
     if (!user || !profile) return;
-
+    
     const cleanNickname = nicknameInput.trim();
-    const cleanUsername = usernameInput.trim().toLowerCase(); 
-
+    const cleanUsername = usernameInput.trim().toLowerCase();
     if (!cleanNickname || !cleanUsername) {
-      setAlertMessage("닉네임과 사용자 고유 ID는 필수 기입 사항입니다.");
-      return;
-    }
-
-    if (!validateUsername(cleanUsername)) {
-      setAlertMessage("사용자 고유 ID는 영문, 숫자, 마침표(.), 밑줄(_)만 가능합니다.");
+      setAlertMessage("닉네임과 사용자 고유 ID는 필수입니다.");
       return;
     }
 
     const isUsernameTaken = Object.values(usersInfo).some(
       (u) => u.id !== user.uid && u.username && u.username.toLowerCase() === cleanUsername
     );
-
     if (isUsernameTaken) {
-      setAlertMessage("이미 사용 중인 아이디입니다. 다른 아이디를 입력해 주세요.");
+      setAlertMessage("이미 사용 중인 아이디입니다.");
       return;
     }
 
@@ -581,40 +360,41 @@ export default function App() {
       emoji: selectedEmoji,
       color: customColor,
       photoURL: customPhotoURL,
-      selectedServerTagId: selectedServerTagId // 내가 부착한 서버 태그 정보 저장
+      selectedServerTagId: selectedServerTagId
     });
-
-    setAlertMessage("프로필 및 계정 변경 사항이 성공적으로 저장되었습니다! ✨");
+    
+    setAlertMessage("프로필이 성공적으로 업데이트되었습니다! ✨");
     setShowSettingsModal(false);
   };
 
-  // 니트로 구독 활성화 / 해제
   const handleToggleNitro = async () => {
     if (!user || !profile) return;
     const userDocRef = doc(collection(db, 'artifacts', appId, 'public', 'data', COLL_USERS), user.uid);
-    
-    await setDoc(userDocRef, {
-      ...profile,
-      isNitro: !profile.isNitro
-    });
-
+    await setDoc(userDocRef, { ...profile, isNitro: !profile.isNitro });
     setShowNitroModal(false);
   };
 
-  // 메시지 전송 로직
+  const handleBoostServer = async () => {
+    if (!user || !activeTargetId) return;
+    const currentServer = communities.find(c => c.id === activeTargetId);
+    if (!currentServer) return;
+    
+    const serverDocRef = doc(db, 'artifacts', appId, 'public', 'data', COLL_COMMUNITIES, activeTargetId);
+    const newBoostCount = (currentServer.boosts || 0) + 1;
+    await updateDoc(serverDocRef, { boosts: newBoostCount });
+    setAlertMessage(`이 서버를 성공적으로 부스트했습니다! (현재 ${newBoostCount}회)`);
+  };
+
   const sendMessage = async (content, isGif = false) => {
     if (!user || !activeTargetId) return;
-
     if (isGif && !profile.isNitro) {
       setShowNitroAlert(true);
       return;
     }
-
     let target = activeTargetId;
     if (activeView === 'dms') {
       target = `dm_${[user.uid, activeTargetId].sort().join('_')}`;
     }
-
     const msgRef = collection(db, 'artifacts', appId, 'public', 'data', COLL_MESSAGES);
     await addDoc(msgRef, {
       targetId: target,
@@ -632,18 +412,8 @@ export default function App() {
     setMessageInput('');
   };
 
-  const handleSendGif = (gifUrl) => {
-    sendMessage(gifUrl, true);
-    setShowGifPicker(false);
-    setGifSearch('');
-  };
-
-  // 선택된 커뮤니티 데이터 찾기
-  const currentCommunity = useMemo(() => {
-    return communities.find(c => c.id === activeTargetId);
-  }, [communities, activeTargetId]);
-
-  // 현재 활성화된 방의 메시지 필터링
+  const currentCommunity = useMemo(() => communities.find(c => c.id === activeTargetId), [communities, activeTargetId]);
+  
   const currentMessages = useMemo(() => {
     if (!activeTargetId) return [];
     let target = activeTargetId;
@@ -653,7 +423,6 @@ export default function App() {
     return allMessages.filter(msg => msg.targetId === target);
   }, [allMessages, activeTargetId, activeView, user]);
 
-  // 종합 설정 모달 열기용 트리거 핸들러
   const openUserSettingsModal = () => {
     if (!profile) return;
     setNicknameInput(profile.name || '');
@@ -663,949 +432,468 @@ export default function App() {
     setCustomColor(profile.color || '#6366f1');
     setCustomPhotoURL(profile.photoURL || '');
     setSelectedServerTagId(profile.selectedServerTagId || '');
-    setSettingsTab('account'); // 기본 계정 탭 오픈
+    setSettingsTab('account');
     setShowSettingsModal(true);
   };
 
   if (!user || !profile) {
     return (
-      <div className="flex items-center justify-center h-screen bg-[#1e1f22] text-white">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <p className="font-semibold text-gray-300">Firestore 안전 연결 중...</p>
-        </div>
+      <div className="flex h-screen bg-[#1e1f22] text-white items-center justify-center flex-col gap-4">
+        <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+        <p className="font-semibold">서버 연결 중...</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen w-full bg-[#313338] text-gray-200 font-sans overflow-hidden selection:bg-indigo-500/30">
+    <div className="flex h-screen bg-[#313338] text-gray-200 overflow-hidden font-sans">
       
       {/* 1. 최좌측 서버 목록 사이드바 */}
-      <div className="w-[72px] bg-[#1e1f22] flex flex-col items-center py-3 gap-2 flex-shrink-0 z-10">
-        
-        {/* 다이렉트 메시지 홈 버튼 */}
+      <div className="w-[72px] bg-[#1e1f22] flex flex-col items-center py-3 gap-2 flex-shrink-0 relative z-20">
         <button 
           onClick={() => { setActiveView('dms'); setActiveTargetId(null); }}
-          className={`w-12 h-12 rounded-[24px] hover:rounded-[16px] transition-all duration-200 flex items-center justify-center group relative
-            ${activeView === 'dms' ? 'bg-indigo-500 text-white rounded-[16px]' : 'bg-[#313338] text-gray-100 hover:bg-indigo-500 hover:text-white'}`}
+          className={`w-12 h-12 rounded-[24px] hover:rounded-[16px] transition-all duration-200 flex items-center justify-center group relative ${activeView === 'dms' ? 'bg-indigo-500 text-white rounded-[16px]' : 'bg-[#313338] text-gray-100 hover:bg-indigo-500 hover:text-white'}`}
         >
-          <MessageSquare size={24} />
-          {activeView === 'dms' && <div className="absolute -left-3 top-2 bottom-2 w-2 bg-white rounded-r-lg"></div>}
+          <MessageSquare className="w-6 h-6" />
+          {activeView === 'dms' && <div className="absolute -left-3.5 top-1/2 transform -translate-y-1/2 w-2 h-10 bg-white rounded-r-full"></div>}
         </button>
         
-        <div className="w-8 h-[2px] bg-[#35363c] rounded-full my-1"></div>
+        <div className="w-8 h-[2px] bg-[#35373c] rounded-full my-1"></div>
 
-        {/* 커뮤니티(서버) 리스트 */}
-        <div className="flex-1 overflow-y-auto w-full flex flex-col items-center gap-2 no-scrollbar">
-          {communities.map(comm => (
-            <button
-              key={comm.id}
-              onClick={() => { setActiveView('community'); setActiveTargetId(comm.id); }}
-              className={`relative transition-all duration-200 group`}
-            >
-              {renderServerIcon(
-                comm, 
-                "w-12 h-12", 
-                "text-xl", 
-                activeTargetId === comm.id && activeView === 'community' ? "rounded-[16px]" : "rounded-[24px] hover:rounded-[16px]"
-              )}
-              {activeTargetId === comm.id && activeView === 'community' && <div className="absolute -left-3 top-2 bottom-2 w-2 bg-white rounded-r-lg"></div>}
-            </button>
-          ))}
-
-          {/* 서버 추가 버튼 */}
+        {communities.map(comm => (
           <button 
-            onClick={() => setShowCreateCommunityModal(true)}
-            className="w-12 h-12 rounded-[24px] hover:rounded-[16px] transition-all duration-200 flex items-center justify-center bg-[#313338] text-green-500 hover:bg-green-500 hover:text-white group"
+            key={comm.id}
+            onClick={() => { setActiveView('community'); setActiveTargetId(comm.id); }}
+            className="relative transition-all duration-200 group w-12 h-12 flex justify-center items-center"
           >
-            <Plus size={24} />
+            {renderServerIcon(comm, "w-12 h-12", "text-xl", activeTargetId === comm.id && activeView === 'community' ? "rounded-[16px]" : "rounded-[24px] hover:rounded-[16px]")}
+            {activeTargetId === comm.id && activeView === 'community' && <div className="absolute -left-3.5 top-1/2 transform -translate-y-1/2 w-2 h-10 bg-white rounded-r-full"></div>}
           </button>
-        </div>
+        ))}
+
+        <button 
+          onClick={() => setShowCreateCommunityModal(true)}
+          className="w-12 h-12 rounded-[24px] hover:rounded-[16px] transition-all duration-200 flex items-center justify-center bg-[#313338] text-green-500 hover:bg-green-500 hover:text-white group mt-2"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
       </div>
 
       {/* 2. 두 번째 사이드바 (채널 또는 친구 목록) */}
       <div className="w-60 bg-[#2b2d31] flex flex-col flex-shrink-0">
-        
-        {/* 상단 헤더 */}
-        <div className="h-12 border-b border-[#1f2023] flex items-center justify-between px-4 font-bold text-gray-100 shadow-sm z-10">
-          <span className="truncate">
-            {activeView === 'dms' ? '다이렉트 메시지' : (currentCommunity?.name || '커뮤니티')}
-          </span>
-          
-          {/* 서버 설정 관리 버튼 */}
-          {activeView === 'community' && currentCommunity && currentCommunity.ownerId === user.uid && (
-            <button 
-              onClick={() => {
-                setServerNameInput(currentCommunity.name);
-                setServerEmojiInput(currentCommunity.emoji || '🏰');
-                setServerColorInput(currentCommunity.color || '#6366f1');
-                setServerPhotoURL(currentCommunity.photoURL || '');
-                setServerTagInput(currentCommunity.tag || '');
-                setShowServerModal(true);
-              }}
-              className="p-1 hover:bg-[#35373c] text-gray-400 hover:text-white rounded transition-colors"
-              title="서버 프로필 및 태그 수정"
-            >
-              <Settings size={16} />
-            </button>
-          )}
+        <div className="h-12 px-4 flex items-center shadow-sm border-b border-[#1e1f22]/50 font-bold text-base bg-[#2b2d31] text-gray-100 hover:bg-[#35373c] cursor-pointer transition-colors justify-between">
+          {activeView === 'dms' ? '다이렉트 메시지' : (currentCommunity?.name || '서버')}
         </div>
 
-        {/* 리스트 영역 */}
-        <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
+        <div className="flex-1 overflow-y-auto p-2 scrollbar-hide">
           {activeView === 'dms' ? (
-            <div>
-              <button 
-                onClick={() => setShowAddFriendModal(true)}
-                className="w-full flex items-center gap-2 px-2 py-2 mb-4 text-gray-300 hover:bg-[#3f4147] hover:text-gray-100 rounded-md transition-colors text-sm"
-              >
-                <UserPlus size={18} />
-                <span>친구 추가하기</span>
+            <>
+              <button onClick={() => setShowAddFriendModal(true)} className="w-full flex items-center gap-2 px-2 py-2 mb-4 text-gray-300 hover:bg-[#3f4147] hover:text-gray-100 rounded-md transition-colors text-sm">
+                <UserPlus className="w-4 h-4" /> 친구 추가하기
               </button>
               
-              <div className="text-xs font-bold text-gray-400 uppercase px-2 mb-1">내 친구 목록</div>
+              <div className="px-2 pb-1 text-xs font-semibold text-gray-400 mt-2 mb-1 flex justify-between items-center">
+                <span>내 친구 목록</span>
+              </div>
+              
               {friends.length === 0 ? (
-                <div className="px-2 text-xs text-gray-500 mt-2">친구가 없습니다.</div>
+                <div className="px-2 py-3 text-xs text-gray-500 text-center bg-[#1e1f22] rounded mt-2">친구가 없습니다.<br/>친구를 추가해보세요!</div>
               ) : (
                 friends.map(friend => {
-                  const friendInfo = usersInfo[friend.id] || { name: '알 수 없는 유저', color: '#555', username: 'unknown', emoji: '👾', status: '', isNitro: false, selectedServerTagId: '' };
+                  const friendInfo = usersInfo[friend.id] || { name: '알 수 없는 유저', username: 'unknown' };
                   return (
-                    <button
+                    <button 
                       key={friend.id}
                       onClick={() => setActiveTargetId(friend.id)}
-                      className={`w-full flex items-center gap-3 px-2 py-2 rounded-md transition-colors group text-left relative
-                        ${activeTargetId === friend.id ? 'bg-[#3f4147] text-white' : 'text-gray-300 hover:bg-[#35373c] hover:text-gray-100'}`}
+                      className={`w-full flex items-center gap-3 px-2 py-2 rounded-md transition-colors group text-left relative ${activeTargetId === friend.id ? 'bg-[#3f4147] text-white' : 'text-gray-300 hover:bg-[#35373c] hover:text-gray-100'}`}
                     >
                       {renderAvatar(friendInfo, "w-8 h-8", "text-sm", "", true)}
-                      <div className="flex flex-col min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-semibold text-sm text-gray-100 truncate">{friendInfo.name}</span>
-                          {friendInfo.selectedServerTagId && renderServerTagBadge(friendInfo.selectedServerTagId)}
-                          {friendInfo.isNitro && (
-                            <span className="text-[10px] text-pink-500" title="니트로 멤버">💎</span>
-                          )}
+                      <div className="flex flex-col overflow-hidden">
+                        <div className="flex items-center gap-1 font-medium truncate">
+                          {friendInfo.name} 
+                          {friendInfo.isNitro && <span className="text-[10px]" title="니트로 멤버">💎</span>}
                         </div>
-                        <span className="text-[10px] text-gray-400 truncate">@{friendInfo.username}</span>
-                        {friendInfo.status && (
-                          <span className="text-[10px] text-indigo-300 truncate mt-0.5">{friendInfo.status}</span>
-                        )}
+                        <div className="text-[10px] text-gray-400 truncate">@{friendInfo.username}</div>
                       </div>
                     </button>
                   )
                 })
               )}
-            </div>
+            </>
           ) : (
-            <div>
-              {/* 커뮤니티 태그 노출 */}
+            <>
               {currentCommunity && (
-                <div className="mb-4 px-2 py-2 bg-[#1e1f22]/60 rounded-lg border border-[#1f2023]/40">
-                  <div className="flex items-center justify-between text-[11px] text-gray-400 font-bold mb-1.5 uppercase">
-                    <span className="flex items-center gap-1">
-                      <Zap size={11} className="text-amber-400 animate-pulse" />
-                      부스트 현황
-                    </span>
-                    <span className="text-amber-400">{currentCommunity.boosts || 0}회 부스트</span>
+                <div className="mb-4 bg-[#1e1f22]/50 rounded-md p-3">
+                  <div className="text-xs font-bold text-gray-400 uppercase flex items-center gap-1 mb-1">
+                    <Zap className="w-3 h-3" /> 부스트 현황
                   </div>
-                  
-                  {currentCommunity.tag ? (
-                    <div className="flex items-center gap-1 bg-[#232428] px-2 py-1 rounded text-xs border border-amber-500/20 text-amber-300">
-                      <Tag size={12} className="flex-shrink-0" />
-                      <span className="truncate font-semibold">{currentCommunity.tag}</span>
-                    </div>
-                  ) : (
-                    <div className="text-[10px] text-gray-500 leading-tight">
-                      {currentCommunity.boosts >= 2 
-                        ? '서버 관리자 설정을 통해 소개 태그를 추가해 보세요!'
-                        : '⚡ 부스트를 2회 달성하면 이곳에 고유 태그를 등록할 수 있습니다!'}
-                    </div>
-                  )}
-
-                  {/* 부스트 기여 버튼 */}
-                  <button 
-                    onClick={handleBoostServer}
-                    className="w-full mt-2 py-1 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-[#1e1f22] font-black rounded text-[10px] uppercase flex items-center justify-center gap-1 transition-all shadow-sm"
-                  >
-                    <Zap size={10} /> 서버 부스트하기
+                  <div className="text-sm font-semibold text-pink-400 mb-2">
+                    {currentCommunity.boosts || 0}회 부스트
+                  </div>
+                  <button onClick={handleBoostServer} className="w-full py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-xs font-bold transition-colors">
+                    서버 부스트하기
                   </button>
                 </div>
               )}
-
-              <div className="text-xs font-bold text-gray-400 uppercase px-2 mb-1">채널 목록</div>
-              <button className="w-full flex items-center gap-2 px-2 py-2 rounded-md bg-[#3f4147] text-white transition-colors text-sm">
-                <Hash size={18} className="text-gray-400" />
-                <span>일반 대화방</span>
+              <div className="px-2 pb-1 text-xs font-semibold text-gray-400 mt-2 mb-1 uppercase">
+                텍스트 채널
+              </div>
+              <button className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md bg-[#3f4147] text-white text-base">
+                <Hash className="w-5 h-5 text-gray-400" /> 일반
               </button>
-            </div>
+            </>
           )}
         </div>
 
         {/* 내 프로필 하단 바 */}
-        <div className="h-[76px] bg-[#232428] flex flex-col justify-center px-2 border-t border-[#1f2023]/40 gap-1 flex-shrink-0">
-          <div className="flex items-center gap-1.5 w-full">
-            {renderAvatar(profile, "w-9 h-9", "text-xl", "", true)}
-            <div className="flex-1 min-w-0 flex flex-col justify-center">
-              <div className="flex items-center gap-1">
-                <span className="text-sm font-bold text-white truncate leading-none">{profile.name}</span>
-                {profile.isNitro && <span className="text-xs text-pink-500" title="니트로 구독중">💎</span>}
+        <div className="h-[52px] bg-[#232428] flex items-center px-2 flex-shrink-0 relative group">
+          <button className="flex-1 flex items-center gap-2 hover:bg-[#3f4147] p-1 rounded-md transition-colors text-left overflow-hidden">
+            {renderAvatar(profile, "w-8 h-8", "text-sm", "", true)}
+            <div className="flex flex-col flex-1 overflow-hidden" onClick={copyMyUsername}>
+              <div className="text-sm font-semibold text-white truncate flex items-center gap-1">
+                {profile.name} {profile.isNitro && <span className="text-[10px]">💎</span>}
               </div>
-              <span className="text-[10px] text-gray-400 truncate leading-none mt-1 cursor-pointer" onClick={copyMyUsername} title="내 ID 복사">
-                @{profile.username}
-              </span>
+              <div className="text-[11px] text-gray-400 truncate hover:text-gray-300">
+                {copied ? '복사됨!' : `@${profile.username}`}
+              </div>
             </div>
-            
-            <button 
-              onClick={openUserSettingsModal}
-              className="p-1.5 text-gray-300 hover:bg-[#3f4147] rounded-md transition-colors"
-              title="사용자 설정 및 프로필 변경"
-            >
-              <Settings size={16} />
-            </button>
-
-            <button onClick={copyMyUsername} className="p-1.5 text-gray-300 hover:bg-[#3f4147] rounded-md transition-colors">
-              {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
-            </button>
-          </div>
-          
-          {/* 니트로 가입 전용 바 */}
-          <button 
-            onClick={() => setShowNitroModal(true)}
-            className={`w-full text-[10px] py-1 rounded-md font-bold flex items-center justify-center gap-1 transition-all shadow-sm
-              ${profile.isNitro 
-                ? 'bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white' 
-                : 'bg-[#35373c] hover:bg-[#404249] text-pink-400 hover:text-pink-300'}`}
-          >
-            <Sparkles size={10} />
-            {profile.isNitro ? '디스코드 니트로 이용 중' : '니트로 패스 가입하기'}
+          </button>
+          <button onClick={openUserSettingsModal} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:bg-[#3f4147] hover:text-gray-200 rounded-md transition-colors">
+            <Settings className="w-5 h-5" />
           </button>
         </div>
       </div>
 
       {/* 3. 메인 채팅 영역 */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#313338] relative">
-        
-        {/* 상단 헤더 */}
-        <div className="h-12 border-b border-[#2b2d31] flex items-center px-4 shadow-sm z-10 flex-shrink-0 bg-[#313338]">
+      <div className="flex-1 flex flex-col bg-[#313338] relative">
+        <div className="h-12 border-b border-[#1e1f22]/50 flex items-center px-4 shadow-sm flex-shrink-0 text-white font-semibold flex-row gap-2">
           {activeTargetId ? (
-            <div className="flex items-center gap-2">
-              {activeView === 'community' ? (
-                renderServerIcon(currentCommunity, "w-6 h-6", "text-xs", "rounded")
-              ) : renderAvatar(usersInfo[activeTargetId], "w-6 h-6", "text-xs")}
-              <div className="flex flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-white text-sm">
-                    {activeView === 'community' 
-                      ? currentCommunity?.name 
-                      : `${usersInfo[activeTargetId]?.name} (@${usersInfo[activeTargetId]?.username})`}
-                  </span>
-                  {activeView === 'community' && currentCommunity?.tag && (
-                    <span className="flex items-center gap-0.5 bg-amber-400/20 text-amber-400 border border-amber-400/30 text-[9px] px-1.5 py-0.5 rounded font-black tracking-wider uppercase">
-                      <Tag size={8} /> {currentCommunity.tag}
-                    </span>
-                  )}
-                  {activeView === 'dms' && usersInfo[activeTargetId]?.selectedServerTagId && (
-                    renderServerTagBadge(usersInfo[activeTargetId].selectedServerTagId)
-                  )}
-                </div>
-                {activeView === 'dms' && usersInfo[activeTargetId]?.status && (
-                  <span className="text-[11px] text-indigo-300 truncate max-w-[300px]">{usersInfo[activeTargetId].status}</span>
-                )}
-              </div>
-            </div>
+            <>
+              {activeView === 'community' ? <Hash className="w-6 h-6 text-gray-400" /> : <AtSign className="w-6 h-6 text-gray-400" />}
+              {activeView === 'community' ? '일반' : usersInfo[activeTargetId]?.name}
+              {activeView === 'dms' && usersInfo[activeTargetId]?.selectedServerTagId && renderServerTagBadge(usersInfo[activeTargetId].selectedServerTagId)}
+            </>
           ) : (
-            <div className="font-bold text-white">환영합니다!</div>
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-6 h-6 text-gray-400" /> 환영합니다!
+            </div>
           )}
         </div>
 
-        {/* 채팅 내역 영역 */}
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 scrollbar-thin">
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col scrollbar-hide">
           {!activeTargetId ? (
-            <div className="flex flex-col items-center justify-center h-full text-gray-400 max-w-sm mx-auto text-center">
-              <div className="mb-4">
-                {renderAvatar(profile, "w-20 h-20", "text-4xl", "", true)}
-              </div>
-              <h2 className="text-lg font-bold text-white mb-1">반가워요, {profile.name}님!</h2>
-              <p className="text-xs mb-4">@{profile.username}</p>
-              
-              <div className="mt-4 flex flex-col items-center gap-1 text-xs bg-indigo-500/10 border border-indigo-500/20 p-4 rounded-xl w-full">
-                <div className="font-semibold text-indigo-300">내 고유 사용자명(ID):</div>
-                <div className="font-mono text-sm bg-black/40 px-3 py-1.5 rounded-lg select-all flex items-center gap-2 cursor-pointer hover:bg-black/60 transition-colors mt-1" onClick={copyMyUsername}>
-                  @{profile.username}
-                  {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} className="text-gray-400" />}
+            <div className="flex-1 flex flex-col items-center justify-center text-center max-w-md mx-auto gap-4">
+              {renderAvatar(profile, "w-24 h-24", "text-5xl", "", true)}
+              <h2 className="text-2xl font-bold text-white">환영합니다, {profile.name}님!</h2>
+              <p className="text-gray-400 text-sm">
+                왼쪽 메뉴에서 친구를 추가하거나 서버를 만들어 대화를 시작해 보세요. 모든 대화는 실시간으로 실제 유저들과 동기화됩니다!
+              </p>
+              <div className="bg-[#1e1f22] px-4 py-3 rounded-lg w-full">
+                <div className="text-xs text-gray-400 font-bold mb-1">내 고유 사용자명(ID)</div>
+                <div className="flex items-center justify-between">
+                  <span className="text-lg font-mono text-white">@{profile.username}</span>
+                  <button onClick={copyMyUsername} className="bg-indigo-500 hover:bg-indigo-600 px-3 py-1.5 rounded text-white text-xs font-semibold">
+                    {copied ? '복사됨!' : '복사하기'}
+                  </button>
                 </div>
               </div>
             </div>
           ) : currentMessages.length === 0 ? (
-            <div className="flex-1 flex items-end">
-              <div className="pb-4">
-                <h1 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
-                  {activeView === 'community' ? (
-                    <>
-                      <span># {currentCommunity?.name} 서버의 시작</span>
-                      {currentCommunity?.tag && (
-                        <span className="text-xs bg-amber-400/20 text-amber-400 px-2 py-0.5 rounded border border-amber-400/20 font-bold">
-                          {currentCommunity.tag}
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    `${usersInfo[activeTargetId]?.name}님과 새로운 추억을 쌓아보세요!`
-                  )}
-                </h1>
-                <p className="text-xs text-gray-400 leading-relaxed">이곳은 안전하고 정제된 대화 공간입니다. 서로를 존중하며 친절하게 메시지를 나누어 보세요!</p>
+            <div className="flex-1 flex flex-col justify-end pb-8 gap-2">
+              <div className="w-16 h-16 bg-[#2b2d31] rounded-full flex items-center justify-center text-3xl mb-2">
+                {activeView === 'community' ? '👋' : '💬'}
               </div>
+              <h2 className="text-3xl font-bold text-white">
+                {activeView === 'community' ? `${currentCommunity?.name} 서버에 오신 것을 환영합니다!` : `${usersInfo[activeTargetId]?.name}님과의 첫 대화 시작!`}
+              </h2>
+              <p className="text-gray-400 text-sm">이곳에서 대화를 시작하면 상대방에게 실시간으로 전달됩니다.</p>
             </div>
           ) : (
-            <div className="mt-auto">
+            <div className="flex flex-col justify-end min-h-full">
               {currentMessages.map((msg, index) => {
-                const sender = usersInfo[msg.senderId] || { name: '알 수 없는 유저', color: '#555', username: 'unknown', emoji: '👾', isNitro: false, photoURL: '', selectedServerTagId: '' };
+                const sender = usersInfo[msg.senderId] || { name: '알 수 없는 유저', username: 'unknown' };
                 const prevMsg = index > 0 ? currentMessages[index - 1] : null;
-                const isSameSender = prevMsg && prevMsg.senderId === msg.senderId && (msg.timestamp - prevMsg.timestamp < 300000); 
-                
+                const isSameSender = prevMsg && prevMsg.senderId === msg.senderId && (msg.timestamp - prevMsg.timestamp < 300000);
                 const timeStr = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
                 return (
-                  <div key={msg.id} className={`flex gap-3 px-2 py-1 hover:bg-[#2e3035] transition-colors rounded ${isSameSender ? 'mt-0.5' : 'mt-4'}`}>
+                  <div key={msg.id} className={`flex gap-4 hover:bg-[#2e3035] py-1 px-2 -mx-2 rounded ${isSameSender ? 'mt-0' : 'mt-4'}`}>
                     {isSameSender ? (
-                      <div className="w-10 flex-shrink-0 flex items-center justify-center opacity-0 hover:opacity-100 text-[10px] text-gray-500">
-                        {timeStr}
+                      <div className="w-10 flex-shrink-0 text-center opacity-0 hover:opacity-100">
+                        <span className="text-[10px] text-gray-500 leading-6">{timeStr.split(' ')[1]}</span>
                       </div>
                     ) : (
                       renderAvatar(sender, "w-10 h-10", "text-xl", "", true)
                     )}
                     
-                    <div className="flex flex-col min-w-0 flex-1">
+                    <div className="flex flex-col">
                       {!isSameSender && (
-                        <div className="flex items-baseline gap-2 flex-wrap">
-                          <span className="font-semibold text-white hover:underline cursor-pointer text-sm flex items-center gap-1">
-                            {sender.name}
-                            {sender.isNitro && <span className="text-[10px]" title="니트로 멤버">💎</span>}
-                          </span>
+                        <div className="flex items-baseline gap-2 mb-1">
+                          <span className="font-medium text-white hover:underline cursor-pointer">{sender.name}</span>
                           {sender.selectedServerTagId && renderServerTagBadge(sender.selectedServerTagId)}
-                          <span className="text-[10px] text-indigo-400 font-mono">@{sender.username}</span>
-                          <span className="text-[10px] text-gray-500">{timeStr}</span>
+                          {sender.isNitro && <span className="text-xs" title="Nitro User">💎</span>}
+                          <span className="text-xs text-gray-400">{timeStr}</span>
                         </div>
                       )}
                       
                       {msg.isGif ? (
-                        <div className="mt-1 max-w-[240px] rounded-lg overflow-hidden border border-[#232428] shadow-md bg-black/10">
-                          <img 
-                            src={msg.text} 
-                            alt="GIF" 
-                            className="w-full h-auto object-cover max-h-[180px]" 
-                            loading="lazy"
-                          />
-                        </div>
+                        <img src={msg.text} alt="gif" className="rounded-md max-w-xs md:max-w-md border border-[#1e1f22]" loading="lazy" />
                       ) : (
-                        <div className="text-gray-200 text-sm whitespace-pre-wrap break-words mt-0.5 leading-relaxed">{msg.text}</div>
+                        <div className="text-gray-200 text-[15px] leading-relaxed whitespace-pre-wrap">{msg.text}</div>
                       )}
                     </div>
                   </div>
                 );
               })}
-              <div ref={messagesEndRef} />
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
-        {/* 메시지 및 GIF 입력 영역 */}
+        {/* 메시지 입력창 */}
         {activeTargetId && (
-          <div className="p-4 pt-0 flex-shrink-0 relative">
-            
-            {/* Tenor GIF 피커 포포버 */}
-            {showGifPicker && (
-              <div className="absolute bottom-16 right-4 left-4 md:left-auto md:w-[340px] h-[340px] bg-[#232428] rounded-xl border border-[#1f2023] shadow-2xl flex flex-col z-20 overflow-hidden">
-                <div className="p-3 border-b border-[#1f2023] flex items-center gap-2">
-                  <div className="flex-1 bg-[#1e1f22] rounded-md flex items-center px-2.5 py-1">
-                    <Search size={14} className="text-gray-400 mr-2 flex-shrink-0" />
-                    <input 
-                      type="text" 
-                      value={gifSearch}
-                      onChange={handleGifSearchChange}
-                      placeholder="움짤 검색하기 (니트로 전용)"
-                      className="bg-transparent border-none focus:outline-none text-xs text-white placeholder-gray-500 w-full"
-                    />
-                    {gifSearch && (
-                      <button onClick={() => { setGifSearch(''); fetchGifs(''); }} className="text-gray-400 hover:text-white">
-                        <X size={12} />
-                      </button>
-                    )}
-                  </div>
-                  <button 
-                    onClick={() => setShowGifPicker(false)}
-                    className="p-1 text-gray-400 hover:text-white rounded hover:bg-[#313338]"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 scrollbar-thin">
-                  {loadingGifs ? (
-                    <div className="col-span-2 flex flex-col items-center justify-center h-full text-gray-400 text-xs">
-                      <Loader2 className="animate-spin mb-2 text-pink-400" size={20} />
-                      <span>불러오는 중...</span>
-                    </div>
-                  ) : gifResults.length === 0 ? (
-                    <div className="col-span-2 flex items-center justify-center h-full text-gray-500 text-xs">
-                      검색 결과가 없습니다.
-                    </div>
-                  ) : (
-                    gifResults.map(gif => (
-                      <button 
-                        key={gif.id}
-                        type="button"
-                        onClick={() => handleSendGif(gif.url)}
-                        className="relative rounded-md overflow-hidden bg-black/20 group aspect-video hover:ring-2 hover:ring-pink-500 transition-all"
-                      >
-                        <img 
-                          src={gif.preview} 
-                          alt="GIF" 
-                          className="w-full h-full object-cover" 
-                          loading="lazy"
-                        />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-[10px] text-white font-bold">
-                          <span>보내기</span>
-                          {!profile.isNitro && <span className="text-[8px] text-pink-400">👑 NITRO</span>}
-                        </div>
-                      </button>
-                    ))
-                  )}
-                </div>
-                <div className="p-1.5 text-center text-[9px] text-pink-400 bg-[#1e1f22]/50 border-t border-[#1f2023] flex items-center justify-center gap-1 font-semibold">
-                  <Sparkles size={10} /> GIF 전송은 니트로 구독 회원에게만 제공됩니다!
-                </div>
-              </div>
-            )}
-
-            <form 
-              onSubmit={handleSendTextMessage}
-              className="bg-[#383a40] rounded-lg flex items-center px-4 py-2 focus-within:ring-2 focus-within:ring-indigo-500 transition-shadow"
-            >
+          <div className="px-4 pb-6 pt-2 bg-[#313338]">
+            <form onSubmit={handleSendTextMessage} className="bg-[#383a40] flex items-center px-4 py-3 rounded-lg gap-3">
+              <button type="button" className="text-gray-400 hover:text-white transition-colors" onClick={() => setShowGifPicker(!showGifPicker)}>
+                <Plus className="w-6 h-6 bg-[#4e5058] rounded-full p-1" />
+              </button>
               <input
                 type="text"
                 value={messageInput}
-                onChange={(e) => setMessageInput(e.target.value)}
-                placeholder={activeView === 'community' 
-                  ? `# 일반 채널에 메시지 보내기`
-                  : `@${usersInfo[activeTargetId]?.name} 님에게 메시지 보내기`}
-                className="flex-1 bg-transparent border-none focus:outline-none text-gray-200 placeholder-gray-500 py-2 text-sm"
+                onChange={e => setMessageInput(e.target.value)}
+                placeholder={`${activeView === 'community' ? '일반 채널' : usersInfo[activeTargetId]?.name + '님'}에게 메시지 보내기`}
+                className="flex-1 bg-transparent border-none text-white focus:outline-none placeholder-gray-500"
               />
-
-              {/* Tenor GIF 피커 토글 버튼 */}
               <button 
-                type="button"
-                onClick={() => setShowGifPicker(!showGifPicker)}
-                className={`p-1.5 rounded-md mr-1 transition-all flex items-center gap-1 text-[11px] font-black uppercase tracking-wider border relative
-                  ${profile.isNitro 
-                    ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white border-transparent shadow' 
-                    : 'text-pink-400 hover:bg-[#4e5058]/30 border-pink-500/30'}`}
-                title="GIF 전송 (니트로 멤버십)"
+                type="button" 
+                onClick={() => {
+                  fetchGifs('');
+                  setShowGifPicker(!showGifPicker);
+                }}
+                className={`px-2 py-1 rounded text-xs font-bold border transition-all ${profile.isNitro ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white border-transparent shadow' : 'border-gray-500 text-gray-400 hover:bg-gray-600 hover:text-white'}`}
               >
-                GIF
-                {!profile.isNitro && <span className="absolute -top-1.5 -right-1 text-[8px] animate-bounce">💎</span>}
-              </button>
-
-              <button 
-                type="submit" 
-                disabled={!messageInput.trim()}
-                className="text-indigo-400 hover:text-indigo-300 disabled:text-gray-600 transition-colors p-2"
-              >
-                <Send size={20} />
+                GIF {profile.isNitro ? '✨' : '🔒'}
               </button>
             </form>
+
+            {/* GIF 피커 */}
+            {showGifPicker && (
+              <div className="absolute bottom-20 right-8 w-80 bg-[#2b2d31] rounded-lg shadow-xl border border-[#1e1f22] overflow-hidden flex flex-col z-50 h-96">
+                <div className="p-3 border-b border-[#1e1f22]">
+                  <input
+                    type="text"
+                    value={gifSearch}
+                    onChange={handleGifSearchChange}
+                    placeholder="Tenor GIF 검색..."
+                    className="w-full bg-[#1e1f22] text-sm text-white px-3 py-2 rounded focus:outline-none"
+                  />
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 scrollbar-hide">
+                  {loadingGifs ? (
+                    <div className="col-span-2 text-center text-gray-400 py-4">불러오는 중...</div>
+                  ) : gifResults.length > 0 ? (
+                    gifResults.map(gif => (
+                      <button 
+                        key={gif.id}
+                        onClick={() => {
+                          sendMessage(gif.url, true);
+                          setShowGifPicker(false);
+                        }}
+                        className="rounded bg-[#1e1f22] overflow-hidden aspect-video hover:ring-2 hover:ring-indigo-500"
+                      >
+                        <img src={gif.preview} alt="gif" className="w-full h-full object-cover" />
+                      </button>
+                    ))
+                  ) : (
+                    <div className="col-span-2 text-center text-gray-400 py-4">결과 없음</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* --- 모달 영역 --- */}
-
-      {/* 종합 사용자 설정 대시보드 모달 (계정 정보, 프로필 편집 일체화 - 스크린샷 가이드 완벽 반영) */}
+      {/* 1. 종합 설정 모달 */}
       {showSettingsModal && (
-        <div className="fixed inset-0 bg-[#1e1f22]/95 flex items-center justify-center z-50 animate-in fade-in duration-200">
-          <div className="w-full h-full max-w-5xl bg-[#313338] text-gray-200 flex overflow-hidden relative shadow-2xl md:rounded-2xl md:h-[85vh]">
-            
-            {/* 우측 상단 닫기 단추 */}
-            <button 
-              onClick={() => setShowSettingsModal(false)}
-              className="absolute top-4 right-4 md:right-8 md:top-6 flex flex-col items-center gap-1 group z-30"
-            >
-              <div className="w-9 h-9 border-2 border-gray-500 group-hover:border-white rounded-full flex items-center justify-center text-gray-400 group-hover:text-white transition-all">
-                <X size={18} />
-              </div>
-              <span className="text-[11px] font-bold text-gray-400 group-hover:text-white uppercase transition-colors">ESC</span>
-            </button>
-
-            {/* 좌측 네비게이션 사이드바 */}
-            <div className="w-64 bg-[#2b2d31] flex-shrink-0 py-12 px-6 flex flex-col gap-1.5 border-r border-[#1f2023]/30 hidden sm:flex">
-              <div className="text-xs font-bold text-gray-400 uppercase px-2.5 mb-2 select-none">사용자 설정</div>
-              
+        <div className="fixed inset-0 z-50 flex bg-[#313338]">
+          <div className="w-1/3 max-w-[280px] bg-[#2b2d31] flex flex-col py-16 items-end pr-6 gap-2">
+            <div className="w-48">
+              <div className="text-xs font-bold text-gray-400 mb-2 px-2">사용자 설정</div>
               <button 
-                onClick={() => setSettingsTab('account')}
-                className={`w-full text-left px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors
-                  ${settingsTab === 'account' ? 'bg-[#35373c] text-white font-semibold' : 'text-gray-400 hover:bg-[#3f4147]/50 hover:text-gray-200'}`}
+                onClick={() => setSettingsTab('account')} 
+                className={`w-full text-left px-3 py-2 rounded text-sm font-medium transition-colors ${settingsTab === 'account' ? 'bg-[#3f4147] text-white' : 'text-gray-300 hover:bg-[#35373c] hover:text-gray-100'}`}
               >
                 내 계정
               </button>
-              
               <button 
-                onClick={() => setSettingsTab('profile')}
-                className={`w-full text-left px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center justify-between
-                  ${settingsTab === 'profile' ? 'bg-[#35373c] text-white font-semibold' : 'text-gray-400 hover:bg-[#3f4147]/50 hover:text-gray-200'}`}
+                onClick={() => setSettingsTab('profile')} 
+                className={`w-full text-left px-3 py-2 rounded text-sm font-medium transition-colors ${settingsTab === 'profile' ? 'bg-[#3f4147] text-white' : 'text-gray-300 hover:bg-[#35373c] hover:text-gray-100'}`}
               >
-                <span>프로필 편집</span>
-                {profile.selectedServerTagId && <span className="text-[9px] bg-pink-500/20 text-pink-400 px-1.5 py-0.5 rounded font-black">TAG</span>}
+                프로필 편집
               </button>
-
+              <div className="my-2 h-[1px] bg-[#3f4147]"></div>
               <button 
-                onClick={() => setSettingsTab('nitro')}
-                className={`w-full text-left px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5
-                  ${settingsTab === 'nitro' ? 'bg-[#35373c] text-white font-semibold' : 'text-pink-400 hover:bg-[#3f4147]/50 hover:text-pink-300'}`}
+                onClick={() => setSettingsTab('nitro')} 
+                className={`w-full text-left px-3 py-2 rounded text-sm font-medium transition-colors flex justify-between ${settingsTab === 'nitro' ? 'bg-[#3f4147] text-white' : 'text-gray-300 hover:bg-[#35373c] hover:text-gray-100'}`}
               >
-                <Sparkles size={14} className="text-pink-500 animate-pulse" />
-                <span>디스코드 Nitro</span>
-              </button>
-
-              <div className="w-full h-[1px] bg-[#35363c] my-4"></div>
-              <button 
-                onClick={() => setShowSettingsModal(false)}
-                className="w-full text-left px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-500/10 rounded-md transition-colors font-medium"
-              >
-                설정 종료
+                Nitro <Zap className="w-4 h-4 text-pink-400" />
               </button>
             </div>
+          </div>
+          
+          <div className="flex-1 bg-[#313338] py-16 pl-10 pr-20 overflow-y-auto relative">
+            <button onClick={() => setShowSettingsModal(false)} className="absolute top-10 right-10 p-2 text-gray-400 hover:text-white rounded-full border-2 border-gray-400 hover:border-white transition-all">
+              <X className="w-5 h-5" />
+            </button>
 
-            {/* 우측 설정 본문 컨텐츠 영역 */}
-            <div className="flex-1 overflow-y-auto py-12 px-6 md:px-10 scrollbar-thin">
-              
-              {/* [탭 1] 내 계정 (Account Tab - 첫 번째 업로드 스크린샷 구조 반영) */}
+            <div className="max-w-2xl">
               {settingsTab === 'account' && (
-                <div className="max-w-xl animate-in fade-in-50 duration-150">
-                  <h1 className="text-xl font-bold text-white mb-6">내 계정 정보</h1>
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+                  <h2 className="text-xl font-bold text-white mb-6">내 계정</h2>
                   
-                  {/* 중앙 대표 요약 카드 */}
-                  <div className="bg-[#1e1f22] rounded-lg overflow-hidden border border-[#1f2023]/60 mb-6 shadow">
-                    {/* 상단 장식 배너 */}
-                    <div className="h-24" style={{ backgroundColor: customColor || '#6366f1' }}></div>
-                    {/* 카드 상세 본문 */}
-                    <div className="p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 relative">
-                      <div className="flex gap-4 items-center -mt-12">
-                        {renderAvatar({ ...profile, color: customColor, emoji: selectedEmoji, photoURL: customPhotoURL }, "w-20 h-20", "text-3xl", "border-[6px] border-[#1e1f22]", true)}
-                        <div className="pt-8">
-                          <h2 className="text-lg font-bold text-white leading-none">{nicknameInput}</h2>
-                          <p className="text-xs text-gray-400 mt-1 font-mono">@{usernameInput}</p>
-                        </div>
+                  <div className="bg-[#1e1f22] rounded-lg overflow-hidden mb-8 relative">
+                    <div className="h-24" style={{ backgroundColor: customColor }}></div>
+                    <div className="px-4 pb-4 pt-12 relative flex justify-between items-end">
+                      <div className="absolute -top-10 left-4">
+                        {renderAvatar({ ...profile, color: customColor }, "w-20 h-20", "text-4xl", "border-[6px] border-[#1e1f22]", true)}
                       </div>
-                      <button 
-                        onClick={() => setSettingsTab('profile')}
-                        className="md:mt-6 px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-xs font-semibold shadow transition-all"
-                      >
-                        프로필 사용자 지정
+                      <div>
+                        <div className="text-xl font-bold text-white">{profile.name}</div>
+                        <div className="text-sm text-gray-400">@{profile.username}</div>
+                      </div>
+                      <button onClick={() => setSettingsTab('profile')} className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium rounded transition-colors">
+                        사용자 프로필 편집
                       </button>
                     </div>
                   </div>
 
-                  {/* 계정 세부 리스트 (수정 단추 포함) */}
-                  <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40 flex flex-col gap-4">
-                    <h3 className="text-xs font-black text-gray-400 uppercase select-none">계정 정보</h3>
-                    
-                    {/* 사용자명 필드 */}
-                    <div className="flex justify-between items-center border-b border-[#35363c] pb-3 text-sm">
+                  <div className="bg-[#2b2d31] rounded-lg p-4">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase mb-4">계정 정보</h3>
+                    <div className="flex justify-between items-center mb-4">
                       <div>
-                        <div className="text-xs text-gray-400 font-bold">사용자명 (고유 아이디)</div>
-                        <div className="text-white font-mono mt-0.5">@{usernameInput}</div>
+                        <div className="text-sm font-medium text-gray-300">사용자명</div>
+                        <div className="text-base text-white">@{profile.username}</div>
                       </div>
-                      <button 
-                        onClick={() => setSettingsTab('profile')}
-                        className="px-3 py-1.5 bg-[#35373c] hover:bg-[#4e5058] text-white rounded text-xs font-bold transition-all"
-                      >
-                        수정
-                      </button>
+                      <button onClick={() => setSettingsTab('profile')} className="px-4 py-1.5 bg-[#4e5058] hover:bg-[#6d6f78] text-white text-sm font-medium rounded transition-colors">수정</button>
                     </div>
-
-                    {/* 이메일 필드 */}
-                    <div className="flex justify-between items-center border-b border-[#35363c] pb-3 text-sm">
+                    <div className="h-[1px] bg-[#3f4147] mb-4"></div>
+                    <div className="flex justify-between items-center">
                       <div>
-                        <div className="text-xs text-gray-400 font-bold">이메일</div>
-                        <div className="text-white mt-0.5">ilove****@gmail.com</div>
+                        <div className="text-sm font-medium text-gray-300">이메일</div>
+                        <div className="text-base text-white">hidden_for_privacy@domain.com</div>
                       </div>
-                      <button 
-                        onClick={() => setAlertMessage("개인정보 보호 정책에 따라 임시 처리된 정보입니다.")}
-                        className="px-3 py-1.5 bg-[#35373c] hover:bg-[#4e5058] text-white rounded text-xs font-bold transition-all"
-                      >
-                        수정
-                      </button>
+                      <button onClick={() => setAlertMessage('가상 환경이므로 이메일 변경이 비활성화되어 있습니다.')} className="px-4 py-1.5 bg-[#4e5058] hover:bg-[#6d6f78] text-white text-sm font-medium rounded transition-colors">수정</button>
                     </div>
-
-                    {/* 전화번호 필드 */}
-                    <div className="flex justify-between items-center pb-1 text-sm">
-                      <div>
-                        <div className="text-xs text-gray-400 font-bold">전화번호</div>
-                        <div className="text-white mt-0.5">**********010</div>
-                      </div>
-                      <button 
-                        onClick={() => setAlertMessage("인증된 보조 전화번호는 디스코드 보안 가이드라인에 따라 마스킹 처리되었습니다.")}
-                        className="px-3 py-1.5 bg-[#35373c] hover:bg-[#4e5058] text-white rounded text-xs font-bold transition-all"
-                      >
-                        수정
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 비밀번호 및 보안 섹션 */}
-                  <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40 flex flex-col gap-4 mt-4">
-                    <h3 className="text-xs font-black text-gray-400 uppercase select-none">비밀번호 및 보안</h3>
-                    <div className="flex justify-between items-center text-sm">
-                      <div>
-                        <div className="text-xs text-gray-400 font-bold">비밀번호 변경</div>
-                        <div className="text-gray-400 mt-0.5">안전하게 보호 중입니다.</div>
-                      </div>
-                      <button 
-                        onClick={() => setAlertMessage("비밀번호 변경 기능은 현재 연동된 가상 익명 인증 서버에서 안전하게 제어 중입니다.")}
-                        className="px-3 py-1.5 bg-[#35373c] hover:bg-[#4e5058] text-white rounded text-xs font-bold transition-all"
-                      >
-                        수정
-                      </button>
-                    </div>
-
-                    <div className="flex justify-between items-center text-sm border-t border-[#35363c] pt-3 mt-1">
-                      <div>
-                        <div className="text-xs text-gray-400 font-bold">다단계 인증 (2FA)</div>
-                        <div className="text-green-500 font-bold mt-0.5 flex items-center gap-1 text-xs">
-                          <Check size={12} /> 활성화되었어요
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => setAlertMessage("이중 인증 수단이 백업 코드로 활성화되었습니다.")}
-                        className="px-3 py-1.5 bg-[#35373c] hover:bg-[#4e5058] text-white rounded text-xs font-bold transition-all"
-                      >
-                        해제하기
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 저장 단추 그룹 */}
-                  <div className="mt-8 flex justify-end gap-3">
-                    <button 
-                      type="button" 
-                      onClick={() => setShowSettingsModal(false)}
-                      className="px-4 py-2 hover:underline text-white text-xs"
-                    >
-                      취소
-                    </button>
-                    <button 
-                      onClick={handleSaveProfileChanges}
-                      className="px-6 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-xs font-bold shadow transition-all"
-                    >
-                      변경사항 저장
-                    </button>
                   </div>
                 </div>
               )}
 
-              {/* [탭 2] 프로필 편집 (Profile Tab - 두 번째 업로드 스크린샷 실물 100% 반영) */}
               {settingsTab === 'profile' && (
-                <div className="animate-in fade-in-50 duration-150">
-                  <h1 className="text-xl font-bold text-white mb-2">사용자 프로필 지정</h1>
-                  <p className="text-xs text-gray-400 mb-6 leading-relaxed">디스코드에서 내 이름 옆에 표시될 나만의 개성 넘치는 프로필 카드, 이름표 및 서버 태그를 꾸며보세요.</p>
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
+                  <h2 className="text-xl font-bold text-white mb-6">사용자 프로필</h2>
                   
-                  {/* 반응형 듀얼 레이아웃 (좌측 입력창 / 우측 실시간 스크린샷 프리뷰) */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
-                    {/* 좌측: 실시간 입력 폼 컴포넌트 */}
-                    <div className="lg:col-span-7 flex flex-col gap-5">
-                      
-                      {/* 1. 배너 컬러 피커 */}
-                      <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase mb-2">프로필 배너 배경 색상 지정</label>
-                        <div className="flex items-center gap-3">
-                          <input 
-                            type="color" 
-                            value={customColor} 
-                            onChange={(e) => setCustomColor(e.target.value)}
-                            className="w-10 h-8 bg-transparent border-none cursor-pointer rounded-md" 
-                          />
-                          <div className="flex-1">
-                            <input
-                              type="text"
-                              value={customColor}
-                              onChange={(e) => setCustomColor(e.target.value)}
-                              className="bg-[#1e1f22] border-none focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white p-2 rounded text-xs font-mono w-full"
-                            />
-                          </div>
-                          {/* 퀵 파스텔 프리셋 */}
-                          {['#6366f1', '#e11d48', '#059669', '#d97706', '#db2777'].map(c => (
-                            <button 
-                              key={c}
-                              type="button"
-                              onClick={() => setCustomColor(c)}
-                              className="w-5 h-5 rounded-full border border-black/20"
-                              style={{ backgroundColor: c }}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* 2. 서버 태그 연동 선택 드롭다운 (핵심 요청!) */}
-                      <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40">
-                        <div className="flex justify-between items-center mb-1.5">
-                          <label className="block text-[11px] font-bold text-gray-400 uppercase">내 이름 옆에 노출할 서버 태그 선택</label>
-                          <span className="text-[10px] text-amber-400 font-bold flex items-center gap-0.5">
-                            <Zap size={10} className="animate-pulse" /> 2부스트 잠금해제 혜택
-                          </span>
-                        </div>
-                        
-                        {availableServerTags.length === 0 ? (
-                          <div className="bg-[#1e1f22] p-3 rounded-lg border border-[#35363c] text-xs text-gray-500 leading-tight">
-                            아직 2회 이상 부스트를 받아 태그를 보유한 서버가 없습니다. <br />
-                            <span className="text-amber-400 font-bold">서버 사이드바 &gt; 서버 부스트하기</span>를 먼저 진행해 보세요!
-                          </div>
-                        ) : (
-                          <select
-                            value={selectedServerTagId}
-                            onChange={(e) => setSelectedServerTagId(e.target.value)}
-                            className="w-full bg-[#1e1f22] border-none text-white p-2.5 rounded-lg text-sm font-semibold focus:ring-1 focus:ring-indigo-500"
-                          >
-                            <option value="">서버 태그 선택 안 함 (기본값)</option>
-                            {availableServerTags.map(srv => (
-                              <option key={srv.id} value={srv.id}>
-                                {srv.emoji || '🏰'} {srv.name} — [{srv.tag}]
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-
-                      {/* 3. 별명 및 고유 ID */}
-                      <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40 flex flex-col gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-gray-400 uppercase mb-1.5">별명 (닉네임)</label>
-                          <input
-                            type="text"
-                            value={nicknameInput}
-                            onChange={(e) => setNicknameInput(e.target.value)}
-                            className="bg-[#1e1f22] border-none focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white p-2.5 rounded text-xs w-full font-semibold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-gray-400 uppercase mb-1">사용자 고유명 (ID)</label>
-                          <div className="relative flex items-center">
-                            <span className="absolute left-2.5 text-gray-400 font-bold text-xs">@</span>
-                            <input
-                              type="text"
-                              value={usernameInput}
-                              onChange={(e) => setUsernameInput(e.target.value)}
-                              className="bg-[#1e1f22] border-none focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white p-2.5 pl-6 rounded text-xs w-full font-mono lowercase"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 4. 소개글 (Bio) */}
-                      <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase mb-1.5">소개글 (소개글은 마크다운 문법을 지원합니다)</label>
-                        <textarea
-                          value={statusInput}
-                          onChange={(e) => setStatusInput(e.target.value)}
-                          maxLength={150}
-                          placeholder="소개글 한 줄을 완성해보세요!"
-                          className="bg-[#1e1f22] border-none focus:outline-none focus:ring-1 focus:ring-indigo-500 text-white p-2.5 rounded text-xs w-full h-16 resize-none scrollbar-thin"
+                  <div className="flex gap-8">
+                    <div className="flex-1 space-y-6">
+                      <div>
+                        <label className="text-xs font-bold text-gray-400 uppercase block mb-2">별명 (닉네임)</label>
+                        <input 
+                          type="text" 
+                          value={nicknameInput}
+                          onChange={e => setNicknameInput(e.target.value)}
+                          className="w-full bg-[#1e1f22] text-white px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" 
                         />
                       </div>
-
-                      {/* 5. 사진 업로드 및 이모지 선택 */}
-                      <div className="bg-[#2b2d31] p-4 rounded-lg border border-[#1f2023]/40 flex flex-col gap-2">
-                        <label className="block text-[11px] font-bold text-gray-400 uppercase mb-1">프로필 아바타 및 GIF 설정</label>
+                      <div>
+                        <label className="text-xs font-bold text-gray-400 uppercase block mb-2">사용자 고유명 (ID)</label>
+                        <input 
+                          type="text" 
+                          value={usernameInput}
+                          onChange={e => setUsernameInput(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
+                          className="w-full bg-[#1e1f22] text-white px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-gray-400 uppercase block mb-2">상태 메시지 (소개글)</label>
+                        <textarea 
+                          value={statusInput}
+                          onChange={e => setStatusInput(e.target.value)}
+                          className="w-full bg-[#1e1f22] text-white px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 h-24 resize-none" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-gray-400 uppercase block mb-2">프로필 테마 컬러</label>
                         <div className="flex gap-2">
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            onChange={handleFileUpload} 
-                            ref={fileInputRef}
-                            className="hidden" 
-                          />
-                          <button
-                            type="button"
-                            onClick={() => fileInputRef.current.click()}
-                            className="flex-1 py-2 bg-[#35373c] hover:bg-[#404249] text-white rounded text-xs font-bold flex items-center justify-center gap-1.5 transition-all border border-[#4e5058]/40"
-                          >
-                            <Upload size={12} />
-                            내 컴퓨터에서 선택
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setShowProfileGifPicker(!showProfileGifPicker)}
-                            className="px-3 py-2 text-xs font-black bg-transparent text-pink-400 border border-pink-500/20 rounded hover:bg-pink-500/10 transition-all"
-                          >
-                            TENOR 움짤 검색
-                          </button>
+                          <input type="color" value={customColor} onChange={e => setCustomColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer border-none bg-transparent" />
+                          <input type="text" value={customColor} onChange={e => setCustomColor(e.target.value)} className="flex-1 bg-[#1e1f22] text-white px-3 py-2 rounded focus:outline-none font-mono text-sm" />
                         </div>
-
-                        {/* 프로필 전용 GIF 검색 팝오버 */}
-                        {showProfileGifPicker && (
-                          <div className="mt-2 bg-[#1e1f22] rounded-lg p-2 border border-[#1f2023] flex flex-col gap-2 max-h-[160px] overflow-hidden">
-                            <div className="flex items-center gap-1 bg-[#232428] rounded px-2 py-1">
-                              <Search size={12} className="text-gray-400" />
-                              <input 
-                                type="text" 
-                                value={profileGifSearch}
-                                onChange={handleProfileGifSearchChange}
-                                placeholder="프로필 움짤 검색..."
-                                className="bg-transparent border-none focus:outline-none text-[10px] text-white w-full"
-                              />
-                            </div>
-                            <div className="grid grid-cols-4 gap-1 overflow-y-auto max-h-[110px] scrollbar-thin">
-                              {loadingProfileGifs ? (
-                                <div className="col-span-4 flex items-center justify-center py-2">
-                                  <Loader2 size={14} className="animate-spin text-pink-500" />
-                                </div>
-                              ) : profileGifResults.map(gif => (
-                                <button
-                                  key={gif.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setCustomPhotoURL(gif.url);
-                                    setSelectedEmoji('');
-                                    setShowProfileGifPicker(false);
-                                  }}
-                                  className="relative aspect-square rounded overflow-hidden hover:ring-2 hover:ring-pink-500 bg-black/30"
-                                >
-                                  <img src={gif.preview} alt="gif" className="w-full h-full object-cover" />
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
-
+                      <div>
+                        <label className="text-xs font-bold text-gray-400 uppercase block mb-2">내 이름 옆 서버 태그 (부스트 혜택)</label>
+                        <select 
+                          value={selectedServerTagId} 
+                          onChange={e => setSelectedServerTagId(e.target.value)}
+                          className="w-full bg-[#1e1f22] text-white px-3 py-2 rounded focus:outline-none"
+                        >
+                          <option value="">선택 안 함</option>
+                          {availableServerTags.map(srv => (
+                            <option key={srv.id} value={srv.id}>{srv.name} [{srv.tag}]</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
-                    {/* 우측: 디스코드 100% 매칭 실시간 미리보기 (두 번째 스크린샷 뷰 구현!) */}
-                    <div className="lg:col-span-5 flex flex-col gap-6">
-                      <div className="text-xs font-bold text-gray-400 uppercase select-none">미리보기</div>
-
-                      {/* [A] 입체 카드형 디스코드 프로필 카드 미리보기 */}
-                      <div className="w-full bg-[#18191c] rounded-xl overflow-hidden shadow-2xl border border-black/30">
-                        {/* 상단 장식 배너 */}
-                        <div className="h-28 relative transition-colors" style={{ backgroundColor: customColor || '#6366f1' }}>
-                          <button 
-                            type="button"
-                            onClick={() => setCustomColor(generateRandomColor())}
-                            className="absolute top-2 right-2 bg-black/50 p-1 rounded hover:bg-black/80 text-white text-[10px] flex items-center gap-1 font-bold"
-                            title="랜덤 배너 색상"
-                          >
-                            🎨 테마 변경
-                          </button>
-                        </div>
-                        
-                        {/* 바디 섹션 */}
-                        <div className="px-4 pb-4 pt-2 relative bg-[#18191c]">
+                    <div className="w-72 flex-shrink-0 flex flex-col items-center">
+                      <div className="text-xs font-bold text-gray-400 uppercase mb-4 w-full text-center">미리보기</div>
+                      <div className="w-full bg-[#1e1f22] rounded-lg overflow-hidden shadow-lg border border-[#3f4147]">
+                        <div className="h-20" style={{ backgroundColor: customColor }}></div>
+                        <div className="px-4 pb-4 pt-10 relative">
+                          <div className="absolute -top-10 left-4">
+                            {renderAvatar({ name: nicknameInput, username: usernameInput, color: customColor, emoji: selectedEmoji, photoURL: customPhotoURL }, "w-20 h-20", "text-4xl", "border-[6px] border-[#1e1f22]", true)}
+                          </div>
+                          <div className="text-xl font-bold text-white flex items-center gap-2">
+                            {nicknameInput || '이름 없음'} {selectedServerTagId && renderServerTagBadge(selectedServerTagId)}
+                          </div>
+                          <div className="text-sm text-gray-400 mb-4">@{usernameInput || 'unknown'}</div>
                           
-                          {/* 튀어나온 아바타 구성 */}
-                          <div className="absolute -top-12 left-3 bg-[#18191c] rounded-full p-[6px] shadow-lg">
-                            {renderAvatar({ color: customColor, emoji: selectedEmoji, photoURL: customPhotoURL }, "w-20 h-20", "text-3xl", "", true)}
-                          </div>
-
-                          <div className="flex justify-end items-center gap-1.5 h-10 mb-4 flex-wrap">
-                            {/* 디스코드 뱃지바 */}
-                            <span className="text-xs p-1 bg-[#1e1f22] hover:bg-[#2b2d31] rounded-md" title="Active Developer">🛡️</span>
-                            <span className="text-xs p-1 bg-[#1e1f22] hover:bg-[#2b2d31] rounded-md" title="HypeSquad Balance">⚖️</span>
-                            {profile.isNitro && <span className="text-xs p-1 bg-[#1e1f22] hover:bg-[#2b2d31] rounded-md" title="Nitro Subscriber">💎</span>}
-                          </div>
-
-                          {/* 닉네임, 유저네임, 서버태그 배합 카드 */}
-                          <div className="bg-[#111214] p-3 rounded-lg border border-[#232428] mb-3">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <h3 className="text-base font-bold text-white">{nicknameInput || profile.name}</h3>
-                              {selectedServerTagId && renderServerTagBadge(selectedServerTagId)}
-                            </div>
-                            <div className="text-xs text-gray-400 font-mono mt-0.5">@{usernameInput || profile.username}</div>
-                          </div>
-
-                          {/* 상태/소개글 영역 */}
-                          <div className="bg-[#111214] p-3 rounded-lg border border-[#232428]">
-                            <h4 className="text-[10px] font-bold text-gray-400 uppercase select-none mb-1">소개글</h4>
-                            <p className="text-xs text-gray-200 whitespace-pre-wrap leading-normal">
-                              {statusInput || '작성된 소개글이 없습니다.'}
-                            </p>
-                          </div>
+                          <div className="w-full h-[1px] bg-[#3f4147] mb-4"></div>
+                          
+                          <div className="text-xs font-bold text-gray-400 uppercase mb-2">소개</div>
+                          <div className="text-sm text-gray-300 break-words">{statusInput || '소개글이 없습니다.'}</div>
                         </div>
                       </div>
 
-                      {/* [B] 하단 그라데이션 이름표 (Nameplate) 미리보기 */}
-                      <div className="text-xs font-bold text-gray-400 uppercase select-none">이름표</div>
-                      <div className="relative rounded-xl overflow-hidden p-[2px] bg-gradient-to-r from-purple-500 via-pink-500 to-indigo-500 shadow-lg animate-pulse-slow">
-                        <div className="bg-[#18191c] p-3 rounded-[10px] flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            {renderAvatar({ color: customColor, emoji: selectedEmoji, photoURL: customPhotoURL }, "w-10 h-10", "text-xl", "")}
-                            <div>
-                              <div className="font-bold text-white flex items-center gap-1.5 text-sm">
-                                <span>{nicknameInput || profile.name}</span>
-                                {selectedServerTagId && renderServerTagBadge(selectedServerTagId)}
-                              </div>
-                              <div className="text-[10px] text-gray-400">@{usernameInput || profile.username}</div>
-                            </div>
-                          </div>
-                          <div className="text-[10px] font-mono font-bold bg-[#232428] px-2 py-1 rounded text-purple-400">
-                            PREVIEW
-                          </div>
-                        </div>
+                      <div className="w-full mt-6 flex justify-end gap-3">
+                        <button onClick={() => setShowSettingsModal(false)} className="px-4 py-2 text-white hover:underline text-sm font-medium">취소</button>
+                        <button onClick={handleSaveProfileChanges} className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-sm font-medium transition-colors">변경사항 저장</button>
                       </div>
-
                     </div>
-
-                  </div>
-
-                  {/* 하단 단추 그룹 */}
-                  <div className="mt-8 flex justify-end gap-3 border-t border-[#232428] pt-4">
-                    <button 
-                      type="button" 
-                      onClick={() => setShowSettingsModal(false)}
-                      className="px-4 py-2 hover:underline text-white text-xs"
-                    >
-                      취소
-                    </button>
-                    <button 
-                      onClick={handleSaveProfileChanges}
-                      className="px-6 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded text-xs font-bold shadow transition-all"
-                    >
-                      변경사항 저장
-                    </button>
                   </div>
                 </div>
               )}
 
-              {/* [탭 3] 니트로 가입 관리 탭 */}
               {settingsTab === 'nitro' && (
-                <div className="max-w-xl animate-in fade-in-50 duration-150 text-center">
-                  <div className="w-16 h-16 bg-pink-500/10 text-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner">
-                    <Sparkles size={36} className="animate-pulse" />
-                  </div>
-                  <h1 className="text-xl font-bold text-white mb-2">Discord Nitro</h1>
-                  <p className="text-xs text-gray-400 leading-relaxed mb-6">
-                    Tenor GIF 실시간 채팅 앤 프로필 지정 혜택을 해제하려면 니트로 패스를 활성화하세요.
+                <div className="animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col items-center text-center py-10">
+                  <div className="text-6xl mb-6">🚀</div>
+                  <h2 className="text-2xl font-bold text-white mb-4">Nitro 패스로 업그레이드 하세요!</h2>
+                  <p className="text-gray-300 mb-8 max-w-md">
+                    고화질 스트리밍, 더 큰 파일 업로드, 커스텀 프로필 설정 등 
+                    디스코드의 모든 고급 기능을 제한 없이 누려보세요. 
+                    (현재 가상 테스트 환경이므로 무료 체험이 가능합니다.)
                   </p>
-
-                  <div className="bg-[#2b2d31] rounded-lg p-5 border border-pink-500/20 text-left mb-6">
-                    <h3 className="text-sm font-bold text-white mb-3">현재 나의 상태: {profile.isNitro ? '👑 니트로 회원' : '미가입 유저'}</h3>
-                    <ul className="text-xs text-gray-300 space-y-2 list-disc pl-4">
-                      <li>실시간 GIF 전송 및 프로필 움직이는 이모티콘 완벽 해금</li>
-                      <li>닉네임 옆 영광스러운 무지개 보석 표식 장착</li>
-                      <li>프로필 아바타 외곽 반짝이 활성화 테두리 추가</li>
-                    </ul>
-                  </div>
-
-                  <div className="flex gap-3 justify-center">
-                    <button 
-                      onClick={handleToggleNitro}
-                      className="px-6 py-2 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded font-bold text-xs shadow transition-all"
-                    >
-                      {profile.isNitro ? '니트로 구독 일시 중단하기' : '지금 즉시 무료로 니트로 가입하기'}
+                  
+                  {profile.isNitro ? (
+                    <button onClick={handleToggleNitro} className="px-8 py-3 bg-gray-500 hover:bg-gray-600 text-white font-bold rounded-lg transition-colors">
+                      Nitro 구독 취소
                     </button>
-                  </div>
+                  ) : (
+                    <button onClick={handleToggleNitro} className="px-8 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white font-bold rounded-lg transition-all shadow-lg shadow-indigo-500/30">
+                      무료로 Nitro 체험하기
+                    </button>
+                  )}
                 </div>
               )}
-
             </div>
           </div>
         </div>
@@ -1613,444 +901,95 @@ export default function App() {
 
       {/* 2. 친구 추가 모달 */}
       {showAddFriendModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[#313338] w-full max-w-sm p-6 rounded-xl shadow-xl flex flex-col mx-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-lg font-bold text-white">친구 추가하기</h2>
-              <button onClick={() => setShowAddFriendModal(false)} className="text-gray-400 hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-            <p className="text-xs text-gray-400 mb-4 leading-relaxed">
-              추가할 친구의 사용자명(@아이디)을 적어주세요.
-            </p>
-            <form onSubmit={handleAddFriend} className="flex flex-col gap-3">
-              <div className="relative flex items-center">
-                <span className="absolute left-3 text-gray-400 font-bold text-base">@</span>
-                <input
-                  type="text"
-                  value={friendUsernameInput}
-                  onChange={(e) => setFriendUsernameInput(e.target.value)}
-                  placeholder="예: tom_12"
-                  className="bg-[#1e1f22] border-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white p-2.5 pl-7 rounded text-sm w-full font-mono"
-                  autoFocus
-                />
-              </div>
-              <div className="flex justify-end gap-2 mt-2">
-                <button 
-                  type="button" 
-                  onClick={() => setShowAddFriendModal(false)}
-                  className="px-3 py-1.5 text-xs hover:underline text-white"
-                >
-                  취소
-                </button>
-                <button 
-                  type="submit"
-                  disabled={!friendUsernameInput.trim()}
-                  className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-500/50 text-white rounded text-xs font-semibold"
-                >
-                  친구 맺기
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 3. 커뮤니티 생성 모달 */}
-      {showCreateCommunityModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[#313338] w-full max-w-sm p-6 rounded-xl shadow-xl flex flex-col mx-4 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-lg font-bold text-white">서버 만들기</h2>
-              <button onClick={() => setShowCreateCommunityModal(false)} className="text-gray-400 hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleCreateCommunity} className="flex flex-col gap-3">
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">서버 이름</label>
-                <input
-                  type="text"
-                  value={newCommunityName}
-                  onChange={(e) => setNewCommunityName(e.target.value)}
-                  placeholder="새로운 모임 공간 이름"
-                  className="bg-[#1e1f22] border-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white p-2.5 rounded text-sm w-full"
-                  autoFocus
-                />
-              </div>
-              <div className="flex justify-end gap-2 mt-2">
-                <button 
-                  type="button" 
-                  onClick={() => setShowCreateCommunityModal(false)}
-                  className="px-3 py-1.5 text-xs hover:underline text-white"
-                >
-                  취소
-                </button>
-                <button 
-                  type="submit"
-                  disabled={!newCommunityName.trim()}
-                  className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-500/50 text-white rounded text-xs font-semibold"
-                >
-                  서버 개설하기
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 4. 서버 프로필 및 태그 수정 모달 */}
-      {showServerModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[#313338] w-full max-w-sm p-6 rounded-xl shadow-xl flex flex-col mx-4 overflow-y-auto max-h-[85vh] scrollbar-thin animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center mb-4 flex-shrink-0">
-              <h2 className="text-lg font-bold text-white">서버 프로필 & 태그 설정</h2>
-              <button onClick={() => setShowServerModal(false)} className="text-gray-400 hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-            </div>
-            
-            {/* 서버 프로필 프리뷰 카드 */}
-            <div className="mb-4 bg-[#2b2d31] rounded-lg p-3 flex items-center gap-3 border border-[#1e1f22] flex-shrink-0">
-              {renderServerIcon({ color: serverColorInput, emoji: serverEmojiInput, photoURL: serverPhotoURL, name: serverNameInput }, "w-12 h-12", "text-2xl", "rounded-xl")}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold text-white truncate">{serverNameInput || '서버 명칭 없음'}</div>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span className="text-[10px] text-amber-400 font-bold flex items-center gap-0.5 bg-amber-400/10 px-1.5 py-0.5 rounded">
-                    <Zap size={9} /> 부스트 {communities.find(c => c.id === activeTargetId)?.boosts || 0}회
-                  </span>
-                  {(serverTagInput || communities.find(c => c.id === activeTargetId)?.tag) && (
-                    <span className="text-[10px] text-indigo-300 font-semibold flex items-center gap-0.5">
-                      <Tag size={9} /> {serverTagInput || communities.find(c => c.id === activeTargetId)?.tag}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {serverPhotoURL && (
-                <button 
-                  type="button"
-                  onClick={() => setServerPhotoURL('')}
-                  className="p-1.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-md transition-all"
-                  title="서버 아이콘 초기화"
-                >
-                  <Trash2 size={14} />
-                </button>
-              )}
-            </div>
-
-            <form onSubmit={handleUpdateServer} className="flex flex-col gap-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#313338] rounded-md shadow-xl w-full max-w-md animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <h2 className="text-xl font-bold text-white mb-2">친구 추가</h2>
+              <p className="text-sm text-gray-400 mb-6">상대방의 디스코드 사용자 고유명(ID)을 입력하여 친구를 추가하세요.</p>
               
-              {/* 서버 커스텀 아이콘 등록 영역 */}
-              <div className="bg-[#1e1f22] p-3 rounded-lg border border-[#2b2d31]">
-                <span className="block text-[10px] font-bold text-gray-400 uppercase mb-2">서버 커스텀 아이콘</span>
-                <div className="flex gap-2">
+              <form onSubmit={handleAddFriend}>
+                <div className="bg-[#1e1f22] border border-[#1e1f22] focus-within:border-indigo-500 rounded p-2 flex items-center gap-2 mb-4 transition-colors">
                   <input 
-                    type="file" 
-                    accept="image/*" 
-                    onChange={handleServerFileUpload} 
-                    ref={serverFileInputRef}
-                    className="hidden" 
-                  />
-                  <button
-                    type="button"
-                    onClick={() => serverFileInputRef.current.click()}
-                    className="flex-1 py-2 bg-[#35373c] hover:bg-[#404249] text-white rounded text-xs font-bold flex items-center justify-center gap-1.5 border border-[#4e5058]/50 transition-all"
-                  >
-                    <Upload size={12} />
-                    파일에서 선택 (GIF 포함)
-                  </button>
-                  
-                  <button
-                    type="button"
-                    onClick={() => setShowServerGifPicker(!showServerGifPicker)}
-                    className={`px-3 py-2 text-xs font-extrabold rounded border transition-all
-                      ${showServerGifPicker 
-                        ? 'bg-amber-400 text-[#1e1f22] border-transparent' 
-                        : 'bg-transparent text-amber-400 border-amber-400/30 hover:bg-amber-400/10'}`}
-                  >
-                    Tenor GIF 검색
-                  </button>
-                </div>
-
-                {/* 서버 전용 Tenor GIF 검색 패널 */}
-                {showServerGifPicker && (
-                  <div className="mt-3 bg-[#232428] rounded-lg p-2 border border-[#313338] flex flex-col gap-2 max-h-[220px]">
-                    <div className="flex items-center gap-1.5 bg-[#1e1f22] rounded px-2 py-1">
-                      <Search size={12} className="text-gray-400" />
-                      <input 
-                        type="text" 
-                        value={serverGifSearch}
-                        onChange={handleServerGifSearchChange}
-                        placeholder="아이콘용 GIF 검색..."
-                        className="bg-transparent border-none focus:outline-none text-[11px] text-white w-full"
-                      />
-                    </div>
-                    
-                    <div className="grid grid-cols-3 gap-1 overflow-y-auto max-h-[160px] scrollbar-thin p-1">
-                      {loadingServerGifs ? (
-                        <div className="col-span-3 flex items-center justify-center py-4">
-                          <Loader2 size={16} className="animate-spin text-amber-500" />
-                        </div>
-                      ) : serverGifResults.map(gif => (
-                        <button
-                          key={gif.id}
-                          type="button"
-                          onClick={() => {
-                            setServerPhotoURL(gif.url);
-                            setServerEmojiInput('');
-                            setShowServerGifPicker(false);
-                          }}
-                          className="relative aspect-square rounded overflow-hidden bg-black/20 hover:ring-2 hover:ring-amber-400"
-                        >
-                          <img src={gif.preview} alt="gif preview" className="w-full h-full object-cover" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 기본 이모지 아이콘 */}
-              {!serverPhotoURL && (
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 uppercase mb-2">또는 기본 아이콘 선택</label>
-                  <div className="grid grid-cols-6 gap-2 bg-[#1e1f22] p-2 rounded-lg">
-                    {COMMUNITY_EMOJIS.map(emoji => (
-                      <button
-                        key={emoji}
-                        type="button"
-                        onClick={() => {
-                          setServerEmojiInput(emoji);
-                          setServerPhotoURL('');
-                        }}
-                        className={`text-xl p-1.5 rounded hover:bg-[#35373c] transition-colors flex items-center justify-center
-                          ${serverEmojiInput === emoji ? 'bg-indigo-500/20 ring-2 ring-indigo-500' : ''}`}
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 서버 대표 색상 */}
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-1 flex justify-between items-center">
-                  <span>서버 테마 배경색</span>
-                  <input 
-                    type="color" 
-                    value={serverColorInput} 
-                    onChange={(e) => setServerColorInput(e.target.value)}
-                    className="w-8 h-6 bg-transparent border-none cursor-pointer rounded" 
-                  />
-                </label>
-                <input
-                  type="text"
-                  value={serverColorInput}
-                  onChange={(e) => setServerColorInput(e.target.value)}
-                  className="bg-[#1e1f22] border-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white p-2 rounded text-xs font-mono w-full"
-                />
-              </div>
-
-              {/* 서버 이름 */}
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">서버 이름</label>
-                <input
-                  type="text"
-                  value={serverNameInput}
-                  onChange={(e) => setServerNameInput(e.target.value)}
-                  maxLength={20}
-                  className="bg-[#1e1f22] border-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white p-2.5 rounded text-sm w-full"
-                />
-              </div>
-
-              {/* 서버 태그 등록 및 부스트 설명 */}
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-xs font-bold text-gray-400 uppercase">서버 소개 태그</label>
-                  <span className="text-[10px] text-amber-400 font-bold flex items-center gap-0.5">
-                    <Zap size={10} /> 2회 이상 부스트 전용 혜택
-                  </span>
-                </div>
-                
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={serverTagInput}
-                    onChange={(e) => setServerTagInput(e.target.value)}
-                    placeholder={(communities.find(c => c.id === activeTargetId)?.boosts || 0) >= 2 
-                      ? "서버를 상징하는 짧은 태그 (예: 게임, 공부방)" 
-                      : "🔒 부스트가 2회 이상 달성되면 변경할 수 있습니다."}
-                    disabled={(communities.find(c => c.id === activeTargetId)?.boosts || 0) < 2}
-                    maxLength={10}
-                    className="bg-[#1e1f22] border-none focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white p-2.5 rounded text-sm w-full disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                    type="text" 
+                    value={friendUsernameInput}
+                    onChange={e => setFriendUsernameInput(e.target.value)}
+                    placeholder="사용자명 입력 (예: user_abcd12)"
+                    className="flex-1 bg-transparent text-white focus:outline-none placeholder-gray-500"
+                    autoFocus
                   />
                 </div>
-              </div>
-
-              <div className="flex justify-end gap-2 mt-2 pt-2 border-t border-[#2b2d31]">
-                <button 
-                  type="button" 
-                  onClick={() => setShowServerModal(false)}
-                  className="px-3 py-1.5 text-xs hover:underline text-white"
-                >
-                  취소
+                <button type="submit" disabled={!friendUsernameInput.trim()} className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-500/50 text-white font-medium py-2 rounded transition-colors">
+                  친구 요청 보내기
                 </button>
-                <button 
-                  type="submit"
-                  disabled={!serverNameInput.trim()}
-                  className="px-4 py-1.5 bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-500/50 text-white rounded text-xs font-semibold"
-                >
-                  수정완료
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 5. 디스코드 니트로(Nitro) 가입 안내 모달 */}
-      {showNitroModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gradient-to-br from-[#1e1f22] via-[#232428] to-[#1e1f22] w-full max-w-sm p-6 rounded-xl shadow-2xl flex flex-col mx-4 border border-pink-500/20 text-center animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-end">
-              <button onClick={() => setShowNitroModal(false)} className="text-gray-400 hover:text-white transition-colors">
-                <X size={20} />
-              </button>
+              </form>
             </div>
-            
-            <div className="w-16 h-16 bg-pink-500/10 text-pink-500 rounded-full flex items-center justify-center mx-auto mb-3 shadow-inner">
-              <Sparkles size={36} className="animate-pulse" />
-            </div>
-            
-            <h2 className="text-xl font-black text-white bg-clip-text text-transparent bg-gradient-to-r from-pink-400 to-purple-400 mb-2">
-              디스코드 NITRO 혜택
-            </h2>
-            
-            <p className="text-xs text-gray-300 leading-relaxed mb-4 max-w-xs mx-auto">
-              니트로 회원이 되시면 채팅 입력창 옆에 있는 <strong className="text-pink-400">Tenor 실시간 무제한 GIF 전송 혜택</strong>과 더불어 프로필에 <strong className="text-pink-400">멋진 핑크 아우라 배지</strong>가 부여됩니다!
-            </p>
-
-            <div className="bg-black/30 p-3.5 rounded-lg border border-pink-500/10 text-left text-xs text-gray-400 mb-5">
-              <div className="flex items-center gap-1.5 mb-1.5 font-bold text-gray-200">
-                <span>💎 주요 혜택 리스트:</span>
-              </div>
-              <ul className="list-disc pl-4 space-y-1">
-                <li>실시간 Tenor GIF 무제한 전송</li>
-                <li>프로필 닉네임 옆 반짝이는 보석 배지 장착</li>
-                <li>화려하게 빛나는 아바타 아우라 적용</li>
-              </ul>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <button 
-                onClick={handleToggleNitro}
-                className="w-full py-2.5 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-lg font-bold text-sm shadow transition-all"
-              >
-                {profile.isNitro ? '구독 상태 해제하기' : '무료로 니트로 구독 가입하기'}
-              </button>
-              <button 
-                type="button" 
-                onClick={() => setShowNitroModal(false)}
-                className="text-xs text-gray-500 hover:text-gray-400 hover:underline"
-              >
-                다음에 할래요
-              </button>
+            <div className="bg-[#2b2d31] p-4 text-right rounded-b-md">
+              <button onClick={() => setShowAddFriendModal(false)} className="text-gray-300 hover:underline text-sm font-medium">닫기</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 6. 니트로 전용 기능 알림 경고 모달 */}
+      {/* 3. 서버 생성 모달 */}
+      {showCreateCommunityModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#313338] rounded-md shadow-xl w-full max-w-md text-center animate-in zoom-in-95 duration-200 overflow-hidden">
+            <div className="p-6">
+              <h2 className="text-2xl font-bold text-white mb-2">서버 만들기</h2>
+              <p className="text-sm text-gray-400 mb-6">서버는 친구들과 함께 어울리는 공간입니다. 나만의 서버를 만들어 보세요.</p>
+              
+              <form onSubmit={handleCreateCommunity}>
+                <div className="text-left mb-6">
+                  <label className="text-xs font-bold text-gray-400 uppercase block mb-2">서버 이름</label>
+                  <input 
+                    type="text" 
+                    value={newCommunityName}
+                    onChange={e => setNewCommunityName(e.target.value)}
+                    placeholder={`${profile.name}님의 서버`}
+                    className="w-full bg-[#1e1f22] text-white px-3 py-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex justify-between items-center bg-[#2b2d31] -mx-6 -mb-6 p-4 mt-8">
+                  <button type="button" onClick={() => setShowCreateCommunityModal(false)} className="text-gray-300 hover:underline text-sm font-medium">뒤로</button>
+                  <button type="submit" disabled={!newCommunityName.trim()} className="bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-500/50 text-white font-medium py-2 px-6 rounded transition-colors">
+                    만들기
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 글로벌 알림 모달 */}
+      {alertMessage && (
+        <div className="fixed top-5 left-1/2 transform -translate-x-1/2 bg-[#2b2d31] border-l-4 border-indigo-500 text-white px-6 py-4 rounded shadow-2xl z-[100] flex items-center gap-4 animate-in slide-in-from-top-10 duration-300">
+          <span>{alertMessage}</span>
+          <button onClick={() => setAlertMessage(null)} className="text-gray-400 hover:text-white">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+      
+      {/* Nitro 기능 접근 제한 알림 */}
       {showNitroAlert && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60]">
-          <div className="bg-[#313338] w-full max-w-xs p-6 rounded-xl shadow-2xl flex flex-col items-center text-center mx-4 border border-pink-500/30">
-            <div className="w-14 h-14 bg-pink-500/10 text-pink-500 rounded-full flex items-center justify-center mb-3">
-              <ShieldAlert size={28} />
-            </div>
-            <h3 className="text-base font-bold text-white mb-2">니트로 전용 기능입니다!</h3>
-            <p className="text-xs text-gray-400 leading-relaxed mb-5">
-              Tenor 실시간 움짤(GIF) 전송 기능은 디스코드 <strong>니트로 패스</strong> 구독자에게만 특별 제공되는 혜택입니다.
-            </p>
-            <div className="flex flex-col gap-2 w-full">
-              <button 
-                onClick={() => {
-                  setShowNitroAlert(false);
-                  setShowNitroModal(true);
-                }}
-                className="w-full py-2 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-lg font-bold text-xs shadow transition-all"
-              >
-                니트로 혜택 보러 가기
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#313338] rounded-md shadow-xl w-full max-w-sm text-center animate-in zoom-in-95 p-6">
+            <div className="text-5xl mb-4">💎</div>
+            <h2 className="text-xl font-bold text-white mb-2">Nitro 전용 기능입니다</h2>
+            <p className="text-sm text-gray-400 mb-6">GIF 전송 및 기타 프리미엄 기능은 Nitro 구독자만 사용할 수 있습니다.</p>
+            <div className="flex flex-col gap-2">
+              <button onClick={() => { setShowNitroAlert(false); openUserSettingsModal(); setSettingsTab('nitro'); }} className="w-full bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white font-bold py-2 rounded">
+                Nitro 업그레이드 알아보기
               </button>
-              <button 
-                onClick={() => setShowNitroAlert(false)}
-                className="w-full py-2 bg-[#2b2d31] hover:bg-[#35373c] text-gray-300 rounded font-semibold text-xs"
-              >
-                창 닫기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 7. 부스트 부족 경고 모달 */}
-      {showBoostAlert && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50">
-          <div className="bg-[#313338] w-full max-w-sm p-6 rounded-xl shadow-2xl flex flex-col items-center text-center mx-4 border border-amber-500/30 animate-in fade-in zoom-in-95 duration-150">
-            <div className="w-14 h-14 bg-amber-400/10 text-amber-400 rounded-full flex items-center justify-center mb-3 shadow-inner">
-              <Zap size={32} className="animate-bounce" />
-            </div>
-            <h3 className="text-lg font-bold text-white mb-2">부스트가 더 필요합니다!</h3>
-            <p className="text-xs text-gray-400 leading-relaxed mb-4 max-w-xs">
-              서버 태그(Tag) 등록 권한은 **누적 부스트 2회 이상**을 달성한 활성화된 커뮤니티 서버에만 주어지는 특별한 혜택입니다.
-            </p>
-            <div className="bg-[#2b2d31] p-3 rounded-lg border border-[#1f2023] w-full text-left text-xs mb-5">
-              <div className="flex justify-between text-gray-300 font-semibold mb-1">
-                <span>현재 부스트 횟수:</span>
-                <span className="text-amber-400">{communities.find(c => c.id === activeTargetId)?.boosts || 0}회</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>목표 부스트 횟수:</span>
-                <span>2회</span>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 w-full">
-              <button 
-                onClick={() => {
-                  setShowBoostAlert(false);
-                  handleBoostServer();
-                }}
-                className="w-full py-2 bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-[#1e1f22] font-black rounded-lg text-xs transition-all"
-              >
-                지금 부스트 1회 기여하기 ⚡
-              </button>
-              <button 
-                onClick={() => setShowBoostAlert(false)}
-                className="w-full py-2 bg-[#2b2d31] hover:bg-[#35373c] text-gray-300 rounded font-semibold text-xs"
-              >
+              <button onClick={() => setShowNitroAlert(false)} className="w-full py-2 text-gray-400 hover:text-white font-medium">
                 닫기
               </button>
             </div>
           </div>
         </div>
       )}
-
-      {/* 8. 일반 시스템 알람 팝업 */}
-      {alertMessage && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]">
-          <div className="bg-[#313338] w-full max-w-xs p-5 rounded-xl shadow-2xl flex flex-col items-center text-center">
-            <p className="text-gray-200 text-xs font-semibold mb-4 leading-relaxed">{alertMessage}</p>
-            <button 
-              onClick={() => setAlertMessage(null)}
-              className="w-full py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded font-bold text-xs"
-            >
-              확인
-            </button>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }
