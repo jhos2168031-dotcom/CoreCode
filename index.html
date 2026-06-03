@@ -1,0 +1,1689 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
+
+// ----------------------------------------------------
+// 1. 기본 탑재 유틸리티 및 안전 수학 파서
+// ----------------------------------------------------
+const safeEvaluate = (str) => {
+    const cleanStr = str.replace(/[^0-9+\-*/().]/g, '');
+    if (!cleanStr) return '0';
+    try {
+        const fn = new Function(`return (${cleanStr})`);
+        const result = fn();
+        return (result === undefined || isNaN(result)) ? 'Error' : String(result);
+    } catch (e) {
+        return 'Error';
+    }
+};
+
+const defaultGameTemplate = 
+`<div class="h-screen w-screen bg-slate-900 text-white flex flex-col items-center justify-center relative select-none">
+    <div class="absolute top-4 text-center">
+        <h3 class="font-bold text-lg text-indigo-400">사과 받기 미니게임</h3>
+        <p class="text-xs text-gray-400">Score: <span id="score" class="font-bold text-white">0</span></p>
+    </div>
+    <div id="basket" class="absolute bottom-6 w-16 h-8 bg-indigo-500 rounded-b-xl flex items-center justify-center font-bold text-xs" style="left: calc(50% - 32px);">바구니</div>
+    <div id="apple" class="absolute text-2xl" style="top:0px; left:150px;">🍎</div>
+    <div class="absolute bottom-2 flex gap-4 w-full justify-between px-6">
+        <button id="left-btn" class="p-3 bg-white/20 active:bg-white/40 rounded-lg text-xl w-16"><i class="fas fa-arrow-left"></i></button>
+        <button id="right-btn" class="p-3 bg-white/20 active:bg-white/40 rounded-lg text-xl w-16"><i class="fas fa-arrow-right"></i></button>
+    </div>
+</div>
+<script>
+    (function() {
+        let score = 0;
+        let basketLeft = 130;
+        let appleX = Math.random() * 200 + 30;
+        let appleY = 0;
+        const basket = document.getElementById("basket");
+        const apple = document.getElementById("apple");
+        const scoreSpan = document.getElementById("score");
+
+        document.getElementById("left-btn").addEventListener("click", () => {
+            basketLeft = Math.max(0, basketLeft - 30);
+            basket.style.left = basketLeft + "px";
+        });
+        document.getElementById("right-btn").addEventListener("click", () => {
+            basketLeft = Math.min(240, basketLeft + 30);
+            basket.style.left = basketLeft + "px";
+        });
+
+        setInterval(() => {
+            appleY += 4;
+            if (appleY > 340) {
+                if (Math.abs(appleX - basketLeft) < 50) {
+                    score += 10;
+                    scoreSpan.innerText = score;
+                }
+                appleY = 0;
+                appleX = Math.random() * 200 + 30;
+                apple.style.left = appleX + "px";
+            }
+            apple.style.top = appleY + "px";
+        }, 45);
+    })();
+</script>`;
+
+const defaultStoreApps = [
+    { key: "paint", title: "그림판", desc: "마우스를 이용해 캔버스에 나만의 작품을 그려보세요.", icon: "fa-palette", isOfficial: true },
+    { key: "calculator", title: "계산기", desc: "간단한 수식을 연산할 수 있는 간이 유틸리티 도구입니다.", icon: "fa-calculator", isOfficial: true },
+    { key: "terminal", title: "터미널", desc: "명령어를 입력하여 가상 환경을 직접 타이핑 제어해보세요.", icon: "fa-terminal", isOfficial: true }
+];
+
+// ----------------------------------------------------
+// 파이어베이스 글로벌 인스턴스 초기화 (RULE 1, 3 준수)
+// ----------------------------------------------------
+const firebaseConfig = JSON.parse(__firebase_config);
+const fApp = initializeApp(firebaseConfig);
+const auth = getAuth(fApp);
+const db = getFirestore(fApp);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+export default function App() {
+    // ----------------------------------------------------
+    // 2. 핵심 OS 상태 관리 정의
+    // ----------------------------------------------------
+    const [bootProgress, setBootProgress] = useState(0);
+    const [isBooted, setIsBooted] = useState(false);
+    const [isUnlocked, setIsUnlocked] = useState(false);
+    const [passwordInput, setPasswordInput] = useState('');
+    const [showingAuth, setShowingAuth] = useState(false);
+
+    const [user, setUser] = useState(null);
+
+    // 가상 파일 및 동적 게시판 앱 시스템
+    const [downloadedFiles, setDownloadedFiles] = useState([
+        { key: 'file_1', title: 'welcome.txt', content: 'Finder OS에 오신 것을 환영합니다! 안전하고 건강한 가상 컴퓨팅 환경입니다.', type: 'document', icon: 'fa-file-lines text-blue-400', isOfficial: true }
+    ]);
+    const [deployedApps, setDeployedApps] = useState([]);
+    const [installedAppKeys, setInstalledAppKeys] = useState(['finder', 'timetable', 'notepad', 'developer', 'store', 'chrome']);
+    const [openWindows, setOpenWindows] = useState({ finder: true });
+
+    // 창 상태관리
+    const [activeWinId, setActiveWinId] = useState('finder');
+    const [windowZIndex, setWindowZIndex] = useState({ finder: 10 });
+    const [topZ, setTopZ] = useState(10);
+    const [windowPos, setWindowPos] = useState({
+        finder: { x: 60, y: 60, w: 720, h: 480 },
+        timetable: { x: 90, y: 80, w: 850, h: 540 },
+        notepad: { x: 120, y: 100, w: 500, h: 400 },
+        developer: { x: 160, y: 80, w: 850, h: 550 },
+        store: { x: 200, y: 120, w: 750, h: 500 },
+        chrome: { x: 100, y: 90, w: 800, h: 550 },
+        settings: { x: 140, y: 130, w: 500, h: 400 },
+        weather: { x: 220, y: 70, w: 350, h: 450 },
+        paint: { x: 150, y: 110, w: 600, h: 450 },
+        calculator: { x: 190, y: 120, w: 320, h: 450 },
+        terminal: { x: 110, y: 140, w: 600, h: 400 }
+    });
+    
+    // 드래그 상태 제어
+    const isDragging = useRef(false);
+    const activeDragId = useRef(null);
+    const dragOffset = useRef({ x: 0, y: 0 });
+
+    // 시간 및 오버레이 알림 상태
+    const [timeStr, setTimeStr] = useState('21:40');
+    const [dateStr, setDateStr] = useState('5월 19일 화요일');
+    const [notification, setNotification] = useState(null);
+    const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, fileKey: null });
+    const [saveDialog, setSaveDialog] = useState({ visible: false, content: '' });
+    const [alertData, setAlertData] = useState(null);
+    const [editAuthModal, setEditAuthModal] = useState({ visible: false, appData: null, pwdInput: '' });
+
+    // 가상 계정 데이터베이스 및 로그인 상태
+    const [accounts, setAccounts] = useState([
+        { id: 'visitor', pw: '1234', name: '방문자 게스트', isAdmin: false },
+        { id: 'FinderDev', pw: 'Wlgus10202!!', name: '최고 관리자', isAdmin: true }
+    ]);
+    const [loggedInUser, setLoggedInUser] = useState({ id: 'visitor', name: '방문자 게스트', isAdmin: false });
+    const [loginModalVisible, setLoginModalVisible] = useState(false);
+    const [isRegisterMode, setIsRegisterMode] = useState(false);
+    const [loginId, setLoginId] = useState('');
+    const [loginPw, setLoginPw] = useState('');
+    const [loginName, setLoginName] = useState('');
+
+    // 개발 에디터용 로컬 상태 바인딩
+    const [devTitle, setDevTitle] = useState('');
+    const [devCreator, setDevCreator] = useState('');
+    const [devDesc, setDevDesc] = useState('');
+    const [devIcon, setDevIcon] = useState('fa-gamepad');
+    const [devEditPassword, setDevEditPassword] = useState('');
+    const [devCode, setDevCode] = useState(defaultGameTemplate);
+    const [devExistingKey, setDevExistingKey] = useState('');
+    const [previewKey, setPreviewKey] = useState(0);
+
+    // 메모장용 상태
+    const [notepadText, setNotepadText] = useState('');
+
+    // 브라우저 주소
+    const [chromeUrl, setChromeUrl] = useState('https://www.google.com/search?igu=1');
+    const [chromeInput, setChromeInput] = useState('');
+
+    // 그림판, 계산기, 터미널 상태
+    const [calcDisplay, setCalcDisplay] = useState('0');
+    const [paintColor, setPaintColor] = useState('#000000');
+    const [paintSize, setPaintSize] = useState(5);
+    const paintCanvasRef = useRef(null);
+    const paintDrawing = useRef(false);
+    const [terminalHistory, setTerminalHistory] = useState([]);
+    const [terminalInput, setTerminalInput] = useState('');
+
+    // 설정 오버레이 및 배경
+    const [bgImage, setBgImage] = useState('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2064');
+    const [brightness, setBrightness] = useState(0);
+
+    // 관리자 계정 상태
+    const [adminVerified, setAdminVerified] = useState(false);
+    const [adminAuthModal, setAdminAuthModal] = useState({ visible: false, targetKey: null });
+    const [adminIdInput, setAdminIdInput] = useState('');
+    const [adminPwInput, setAdminPwInput] = useState('');
+
+    // 시간표(컴시간알리미) 앱용 내부 상태
+    const [schoolsList, setSchoolsList] = useState({});
+    const [currentSelectedSchool, setCurrentSelectedSchool] = useState('');
+    const [schoolSearchQuery, setSchoolSearchQuery] = useState('');
+    const [isRegisterSchoolModal, setIsRegisterSchoolModal] = useState(false);
+    const [newSchoolName, setNewSchoolName] = useState('');
+    const [newSchoolGrid, setNewSchoolGrid] = useState(Array(7).fill(null).map(() => Array(5).fill('-')));
+    const [timeTableStatus, setTimeTableStatus] = useState('연결 중...');
+    const [timeTableIndicatorColor, setTimeTableIndicatorColor] = useState('amber');
+    const [currentCellInfo, setCurrentCellInfo] = useState(null); // { r, c }
+    const [subjectModalOpen, setSubjectModalOpen] = useState(false);
+    const [customSubjectInput, setCustomSubjectInput] = useState('');
+
+    // ----------------------------------------------------
+    // 3. 인증 실행 및 리스너 등록 (RULE 3)
+    // ----------------------------------------------------
+    useEffect(() => {
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, setUser);
+        return () => unsubscribe();
+    }, []);
+
+    // ----------------------------------------------------
+    // 4. 배포 게임 및 시간표 클라우드 데이터 구독 (RULE 1, 2)
+    // ----------------------------------------------------
+    useEffect(() => {
+        if (!user) return;
+
+        // 배포용 인디 게임 리스트 파이어베이스 연동 실시간 구독 (RULE 1 준수)
+        const appsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'user_games');
+        const unsubscribeGames = onSnapshot(appsColRef, (snapshot) => {
+            const list = [];
+            snapshot.forEach(doc => {
+                list.push({ key: doc.id, ...doc.data() });
+            });
+            setDeployedApps(list);
+        }, (err) => console.error("게임 목록 로드 오류", err));
+
+        // 컴시간알리미 학교 시간표 리스트 실시간 구독
+        const schoolsColRef = collection(db, 'artifacts', appId, 'public', 'data', 'schools');
+        const unsubscribeSchools = onSnapshot(schoolsColRef, (snapshot) => {
+            const fetched = {};
+            snapshot.forEach(doc => {
+                const docData = doc.data();
+                if (typeof docData.timetable === 'string') {
+                    try {
+                        fetched[doc.id] = JSON.parse(docData.timetable);
+                    } catch (e) {
+                        fetched[doc.id] = docData.timetable;
+                    }
+                } else {
+                    fetched[doc.id] = docData.timetable;
+                }
+            });
+            
+            // 만약 클라우드에 아직 등록된 학교가 없다면 기본 데모 학교들 자동 저장
+            if (Object.keys(fetched).length === 0) {
+                const defaultSample = {
+                    "위례중학교": [
+                        ["국어", "수학", "영어", "과학", "사회"],
+                        ["역사", "체육", "음악", "국어", "수학"],
+                        ["영어", "미술", "과학", "한문", "기술가정"],
+                        ["수학", "국어", "사회", "영어", "진로"],
+                        ["도덕", "정보", "체육", "과학", "동아리"],
+                        ["한문", "영어", "창체", "보건", "동아리"],
+                        ["자율", "수학", "영어", "국어", "창체"]
+                    ]
+                };
+                Object.keys(defaultSample).forEach(async (sName) => {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'schools', sName), {
+                        timetable: JSON.stringify(defaultSample[sName])
+                    });
+                });
+            }
+
+            setSchoolsList(fetched);
+            setTimeTableStatus('클라우드 동기화 완료');
+            setTimeTableIndicatorColor('green');
+        }, (err) => {
+            console.error("시간표 목록 로드 오류", err);
+            setTimeTableStatus('오프라인 데이터 가동');
+            setTimeTableIndicatorColor('amber');
+        });
+
+        return () => {
+            unsubscribeGames();
+            unsubscribeSchools();
+        };
+    }, [user]);
+
+    // ----------------------------------------------------
+    // 시간 및 게이지 업데이터 루프
+    // ----------------------------------------------------
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setBootProgress(prev => {
+                if (prev >= 100) {
+                    clearInterval(interval);
+                    setTimeout(() => setIsBooted(true), 600);
+                    return 100;
+                }
+                return prev + 5;
+            });
+        }, 10);
+
+        const clockInterval = setInterval(() => {
+            const now = new Date();
+            setTimeStr(now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }));
+            setDateStr(now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' }));
+        }, 1000);
+
+        return () => {
+            clearInterval(interval);
+            clearInterval(clockInterval);
+        };
+    }, []);
+
+    // ----------------------------------------------------
+    // 시스템 잠금 해제 처리
+    // ----------------------------------------------------
+    const handleUnlock = () => {
+        if (passwordInput === '1234' || passwordInput === '') {
+            setIsUnlocked(true);
+            triggerNotification("Finder OS 시스템에 성공적으로 로그인했습니다.");
+        } else {
+            alert('비밀번호가 틀렸습니다. (기본: 1234 혹은 공란)');
+        }
+    };
+
+    const triggerNotification = (msg) => {
+        setNotification(msg);
+        setTimeout(() => setNotification(null), 4000);
+    };
+
+    const closeAlert = () => {
+        setAlertData(null);
+    };
+
+    // ----------------------------------------------------
+    // 윈도우 제어 및 스케일 조정 (드래그앤드롭 시스템)
+    // ----------------------------------------------------
+    const openApp = (id, appData = null) => {
+        setOpenWindows(prev => ({ ...prev, [id]: true }));
+        setActiveWinId(id);
+        setTopZ(prev => {
+            const nextZ = prev + 1;
+            setWindowZIndex(z => ({ ...z, [id]: nextZ }));
+            return nextZ;
+        });
+
+        setWindowPos(prev => {
+            if (prev[id]) return prev;
+            return {
+                ...prev,
+                [id]: { x: 140, y: 110, w: 450, h: 500 }
+            };
+        });
+
+        if (id === 'developer' && appData) {
+            setDevTitle(appData.title);
+            setDevCreator(appData.creator || loggedInUser.name);
+            setDevDesc(appData.desc);
+            setDevIcon(appData.icon || 'fa-gamepad');
+            setDevEditPassword(appData.editPassword);
+            setDevExistingKey(appData.key);
+            setDevCode(appData.rawCode || appData.content);
+        }
+    };
+
+    const closeWindow = (id) => {
+        setOpenWindows(prev => ({ ...prev, [id]: false }));
+    };
+
+    const toggleMinimize = (id) => {
+        closeWindow(id);
+    };
+
+    const toggleMaximize = (id) => {
+        setWindowPos(prev => ({
+            ...prev,
+            [id]: prev[id].w === window.innerWidth ? { x: 100, y: 100, w: 600, h: 450 } : { x: 0, y: 28, w: window.innerWidth, h: window.innerHeight - 28 }
+        }));
+    };
+
+    // 신규 추가: 창 스케일(크기)을 3단계로 조절하는 함수
+    const toggleScale = (id) => {
+        setWindowPos(prev => {
+            const current = prev[id];
+            if (!current) return prev;
+            
+            let newW = current.w;
+            let newH = current.h;
+
+            if (newW <= 550) { newW = 750; newH = 550; }
+            else if (newW <= 750) { newW = 950; newH = 700; }
+            else { newW = 450; newH = 450; }
+
+            newW = Math.min(newW, window.innerWidth - 40);
+            newH = Math.min(newH, window.innerHeight - 80);
+
+            return {
+                ...prev,
+                [id]: {
+                    ...current,
+                    w: newW,
+                    h: newH
+                }
+            };
+        });
+    };
+
+    const focusWindow = (id) => {
+        setActiveWinId(id);
+        setTopZ(prev => {
+            const nextZ = prev + 1;
+            setWindowZIndex(z => ({ ...z, [id]: nextZ }));
+            return nextZ;
+        });
+    };
+
+    const handleHeaderMouseDown = (id, e) => {
+        isDragging.current = true;
+        activeDragId.current = id;
+        
+        const currentX = windowPos[id]?.x ?? 140;
+        const currentY = windowPos[id]?.y ?? 110;
+
+        dragOffset.current = {
+            x: e.clientX - currentX,
+            y: e.clientY - currentY
+        };
+        focusWindow(id);
+        document.addEventListener('mousemove', handleHeaderMouseMove);
+        document.addEventListener('mouseup', handleHeaderMouseUp);
+    };
+
+    const handleHeaderMouseMove = (e) => {
+        if (!isDragging.current) return;
+        const id = activeDragId.current;
+        setWindowPos(prev => ({
+            ...prev,
+            [id]: {
+                ...prev[id],
+                x: Math.max(0, Math.min(window.innerWidth - 100, e.clientX - dragOffset.current.x)),
+                y: Math.max(28, e.clientY - dragOffset.current.y)
+            }
+        }));
+    };
+
+    const handleHeaderMouseUp = () => {
+        isDragging.current = false;
+        activeDragId.current = null;
+        document.removeEventListener('mousemove', handleHeaderMouseMove);
+        document.removeEventListener('mouseup', handleHeaderMouseUp);
+    };
+
+    // ----------------------------------------------------
+    // 우클릭 공식 지정 & 파일 관리 기믹
+    // ----------------------------------------------------
+    const handleContextMenu = (e, key) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        let xPos = e.clientX;
+        let yPos = e.clientY;
+        
+        if (window.innerWidth - xPos < 220) xPos = window.innerWidth - 220;
+        if (window.innerHeight - yPos < 150) yPos = window.innerHeight - 150;
+
+        setContextMenu({
+            visible: true,
+            x: xPos,
+            y: yPos,
+            fileKey: key
+        });
+    };
+
+    const handleMarkOfficialInit = () => {
+        setContextMenu(prev => ({ ...prev, visible: false }));
+        const fileKey = contextMenu.fileKey;
+
+        if (adminVerified || loggedInUser.isAdmin) {
+            applyOfficialBadge(fileKey);
+        } else {
+            setAdminAuthModal({ visible: true, targetKey: fileKey });
+        }
+    };
+
+    const handleAdminLoginSubmit = (e) => {
+        e.preventDefault();
+        if (adminIdInput === "FinderDev" && adminPwInput === "Wlgus10202!!") {
+            setAdminVerified(true);
+            setAdminAuthModal(prev => ({ ...prev, visible: false }));
+            applyOfficialBadge(adminAuthModal.targetKey);
+            setAdminIdInput('');
+            setAdminPwInput('');
+            triggerNotification("관리자 권한 승인 성공!");
+        } else {
+            alert("관리자 계정 정보가 틀렸습니다.");
+        }
+    };
+
+    const applyOfficialBadge = async (fileKey) => {
+        // 로컬 데이터 선반영
+        setDownloadedFiles(prev => prev.map(f => f.key === fileKey ? { ...f, isOfficial: true } : f));
+        
+        // 파이어베이스 데이터베이스 업데이트 (공식 배지 동기화)
+        if (user) {
+            try {
+                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_games', fileKey);
+                await updateDoc(gameRef, { isOfficial: true });
+                triggerNotification("성공적으로 공식 앱 지정 배지가 부여되었습니다!");
+            } catch (err) {
+                console.error("데이터베이스 업데이트 오류", err);
+            }
+        }
+    };
+
+    const deleteFile = async (key) => {
+        setDownloadedFiles(prev => prev.filter(f => f.key !== key));
+        setInstalledAppKeys(prev => prev.filter(k => k !== key));
+
+        if (user) {
+            try {
+                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_games', key);
+                await deleteDoc(gameRef);
+                triggerNotification("선택한 파일이 클라우드 서버에서 성공적으로 삭제되었습니다.");
+            } catch (err) {
+                console.error("게임 삭제 오류", err);
+            }
+        }
+    };
+
+    // ----------------------------------------------------
+    // 배포 및 앱 수정 (파이어베이스 실시간 영구 연동)
+    // ----------------------------------------------------
+    const handleDeployGame = async () => {
+        if (!devTitle || !devDesc || !devCode) {
+            setAlertData({ title: "오류", msg: "앱 이름, 설명, 그리고 코드를 빠짐없이 입력해 주세요." });
+            return;
+        }
+        if (!devEditPassword) {
+            setAlertData({ title: "오류", msg: "배포할 앱을 나중에 수정하기 위해 '수정 비밀번호'를 반드시 지정해 주세요." });
+            return;
+        }
+
+        const appKey = devExistingKey || ('app_' + Date.now());
+        const payload = {
+            title: devTitle,
+            desc: devDesc,
+            icon: devIcon,
+            creator: devCreator || loggedInUser.name,
+            editPassword: devEditPassword,
+            rawCode: devCode,
+            isOfficial: false,
+            content: devCode
+        };
+
+        if (user) {
+            try {
+                // RULE 1: /artifacts/{appId}/public/data/user_games 경로 사용
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_games', appKey);
+                await setDoc(docRef, payload);
+                triggerNotification(`인디 게임 "${devTitle}"이 클라우드 서버에 안전하게 실시간 영구 저장되었습니다!`);
+            } catch (err) {
+                console.error("게임 배포 오류", err);
+                setAlertData({ title: "저장 실패", msg: "네트워크 오류로 실시간 배포에 실패했습니다." });
+            }
+        }
+
+        setDevTitle('');
+        setDevDesc('');
+        setDevEditPassword('');
+        setDevExistingKey('');
+    };
+
+    const handleEditDeployedApp = (app) => {
+        setEditAuthModal({ visible: true, appData: app, pwdInput: '' });
+    };
+
+    const installApp = (app) => {
+        if (!installedAppKeys.includes(app.key)) {
+            setInstalledAppKeys(prev => [...prev, app.key]);
+            triggerNotification(`"${app.title}" 앱이 도크바에 성공적으로 설치되었습니다.`);
+        }
+    };
+
+    // 그림판용 Canvas 이벤트 핸들러
+    const startPaintDraw = (e) => {
+        paintDrawing.current = true;
+        paintDraw(e);
+    };
+
+    const endPaintDraw = () => {
+        paintDrawing.current = false;
+        const ctx = paintCanvasRef.current?.getContext('2d');
+        if(ctx) ctx.beginPath();
+    };
+
+    const paintDraw = (e) => {
+        if (!paintDrawing.current || !paintCanvasRef.current) return;
+        const ctx = paintCanvasRef.current.getContext('2d');
+        const rect = paintCanvasRef.current.getBoundingClientRect();
+        ctx.lineWidth = paintSize;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = paintColor;
+
+        ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    };
+
+    const handleTerminalCommand = (e) => {
+        if (e.key === 'Enter') {
+            const cmd = terminalInput.trim();
+            setTerminalInput('');
+            if (!cmd) return;
+            let out = '';
+            if (cmd === 'help') out = "사용 가능 명령어:\n- help\n- clear\n- neofetch\n- ls\n- system";
+            else if (cmd === 'clear') { setTerminalHistory([]); return; }
+            else if (cmd === 'neofetch') out = "Finder OS Cloud Architecture (React Kernel)\nKernel: Virtual JSX Build 2.5\nMemory: React Virtual DOM Sandbox";
+            else if (cmd === 'ls') out = "welcome.txt  Virtual_HardDrive  Apps";
+            else if (cmd === 'system') out = "Seongnam High-Performance Virtual OS Host System";
+            else out = `bash: ${cmd}: 명령어를 찾을 수 없습니다.`;
+
+            setTerminalHistory(prev => [...prev, { cmd, out }]);
+        }
+    };
+
+    const handleLoginSubmit = (e) => {
+        e.preventDefault();
+        const found = accounts.find(acc => acc.id === loginId && acc.pw === loginPw);
+        if (found) {
+            setLoggedInUser(found);
+            setLoginModalVisible(false);
+            setLoginId('');
+            setLoginPw('');
+            triggerNotification(`환영합니다, ${found.name}님! 성공적으로 로그인되었습니다.`);
+        } else {
+            alert('아이디 또는 비밀번호가 잘못되었습니다.');
+        }
+    };
+
+    const handleRegisterSubmit = (e) => {
+        e.preventDefault();
+        if (!loginId || !loginPw || !loginName) {
+            alert('모든 양식을 입력해 주세요.');
+            return;
+        }
+        if (accounts.some(acc => acc.id === loginId)) {
+            alert('이미 존재하는 아이디입니다.');
+            return;
+        }
+        const newAcc = { id: loginId, pw: loginPw, name: loginName, isAdmin: false };
+        setAccounts(prev => [...prev, newAcc]);
+        alert('회원가입이 완료되었습니다! 가입한 정보로 로그인해 주세요.');
+        setIsRegisterMode(false);
+        setLoginPw('');
+    };
+
+    // ----------------------------------------------------
+    // 컴시간알리미(주간 시간표) 클라우드 제어 함수
+    // ----------------------------------------------------
+    const handleSearchSchool = () => {
+        const query = schoolSearchQuery.trim();
+        if (!query) {
+            setAlertData({ title: "검색 오류", msg: "조회할 학교 이름을 입력해 주세요." });
+            return;
+        }
+
+        let foundName = null;
+        for (let sName in schoolsList) {
+            if (sName.toLowerCase().includes(query.toLowerCase())) {
+                foundName = sName;
+                break;
+            }
+        }
+
+        if (foundName) {
+            setCurrentSelectedSchool(foundName);
+            triggerNotification(`"${foundName}" 주간 시간표가 성공적으로 동기화되었습니다.`);
+        } else {
+            setAlertData({ title: "결과 없음", msg: "등록되지 않은 학교명입니다. 우측의 '새 학교 등록하기'를 눌러 직접 추가해 주세요!" });
+        }
+    };
+
+    const handleOpenRegisterSchoolModal = () => {
+        setIsRegisterSchoolModal(true);
+        setNewSchoolName('');
+        setNewSchoolGrid(Array(7).fill(null).map(() => Array(5).fill('-')));
+    };
+
+    const handleSubmitNewSchool = async () => {
+        const sName = newSchoolName.trim();
+        if (!sName) {
+            setAlertData({ title: "등록 오류", msg: "학교 이름을 명확히 기재해 주세요." });
+            return;
+        }
+
+        if (schoolsList[sName]) {
+            setAlertData({ title: "중복 오류", msg: "이미 존재하고 있는 학교 시간표 이름입니다." });
+            return;
+        }
+
+        setTimeTableStatus('저장 중...');
+        try {
+            if (user) {
+                // RULE 1: /artifacts/{appId}/public/data/schools 경로 사용
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'schools', sName);
+                await setDoc(docRef, { timetable: JSON.stringify(newSchoolGrid) });
+                
+                triggerNotification(`🏫 새 학교 "${sName}" 시간표 등록이 완료되었습니다!`);
+                setCurrentSelectedSchool(sName);
+                setIsRegisterSchoolModal(false);
+            }
+        } catch (err) {
+            console.error("학교 등록 실패", err);
+            setTimeTableStatus('동기화 실패');
+        }
+    };
+
+    const handleGridCellChange = (r, c, val) => {
+        setNewSchoolGrid(prev => {
+            const next = prev.map(row => [...row]);
+            next[r][c] = val || '-';
+            return next;
+        });
+    };
+
+    const handleOpenSubjectModal = (r, c) => {
+        setCurrentCellInfo({ r, c });
+        const currentVal = schoolsList[currentSelectedSchool]?.[r]?.[c] || '-';
+        setCustomSubjectInput(currentVal === '-' ? '' : currentVal);
+        setSubjectModalOpen(true);
+    };
+
+    const handleSaveCellChanges = async () => {
+        if (!currentCellInfo) return;
+        const { r, c } = currentCellInfo;
+        const finalVal = customSubjectInput.trim() || '-';
+
+        const updatedGrid = schoolsList[currentSelectedSchool].map((row, rowIdx) => {
+            if (rowIdx !== r) return row;
+            return row.map((cell, cellIdx) => cellIdx === c ? finalVal : cell);
+        });
+
+        // 로컬 데이터 선반영
+        setSchoolsList(prev => ({
+            ...prev,
+            [currentSelectedSchool]: updatedGrid
+        }));
+
+        setSubjectModalOpen(false);
+
+        // 파이어베이스 동기화 반영
+        if (user) {
+            setTimeTableStatus('동기화 중...');
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'schools', currentSelectedSchool);
+                await setDoc(docRef, { timetable: JSON.stringify(updatedGrid) });
+                triggerNotification("시간표 데이터가 클라우드에 실시간 반영되었습니다!");
+            } catch (err) {
+                console.error("시간표 동기화 오류", err);
+                setTimeTableStatus('연결 불량');
+            }
+        }
+    };
+
+    return (
+        <div className="w-screen h-screen overflow-hidden select-none bg-cover bg-center transition-all duration-500 font-sans relative"
+             style={{ 
+                 backgroundColor: '#0b0b0d',
+                 backgroundImage: `url('${bgImage}')` 
+             }}
+             onClick={() => setContextMenu({ visible: false, x: 0, y: 0, fileKey: null })}>
+            
+            {/* 스크롤바 커스텀 스타일 지원 */}
+            <style dangerouslySetInnerHTML={{__html: `
+                .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); border-radius: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.4); }
+                .dark-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+                .dark-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 4px; }
+                .dark-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+                .dark-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+            `}} />
+            
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+            <div className="fixed inset-0 pointer-events-none z-[4900] transition-colors duration-200" style={{ backgroundColor: `rgba(0,0,0,${brightness / 100})` }}></div>
+
+            {/* 부팅 오버레이 */}
+            {!isBooted && (
+                <div className="fixed inset-0 bg-black z-[99999] flex flex-col items-center justify-center">
+                    <div className="text-white text-5xl font-black tracking-widest animate-pulse mb-6 text-center">Finder OS</div>
+                    <div className="w-[150px] h-[4px] bg-[#333] rounded-full mt-10 overflow-hidden animate-pulse">
+                        <div className="h-full bg-white rounded-full transition-all duration-100" style={{ width: `${bootProgress}%` }}></div>
+                    </div>
+                </div>
+            )}
+
+            {/* 잠금 해제 화면 */}
+            {isBooted && !isUnlocked && (
+                <div className="fixed inset-0 z-[9999] flex flex-col justify-between items-center py-16 px-5 bg-cover bg-center"
+                     style={{ backgroundImage: `url('${bgImage}')` }}
+                     onClick={() => setShowingAuth(true)}>
+                    
+                    <div className={`absolute inset-0 bg-black/55 backdrop-blur-3xl transition-opacity duration-500 -z-10 ${showingAuth ? 'opacity-100' : 'opacity-0'}`}></div>
+
+                    <div className={`text-center text-white transition-all duration-500 ${showingAuth ? 'scale-90 -translate-y-6 opacity-80' : ''}`}>
+                        <h2 className="text-lg font-semibold tracking-wide opacity-90 mb-1">{dateStr}</h2>
+                        <h1 className="text-7xl font-light tracking-tighter">{timeStr}</h1>
+                        {!showingAuth && <p className="text-xs text-white/50 mt-6 tracking-wider animate-pulse">클릭하여 잠금 해제</p>}
+                    </div>
+
+                    <div className={`flex flex-col items-center transition-all duration-500 ${showingAuth ? 'opacity-100 scale-100' : 'opacity-0 scale-90 pointer-events-none'}`}>
+                        <div className="w-20 h-20 rounded-full border-2 border-white/40 bg-white/20 flex items-center justify-center text-white/80 mb-4 overflow-hidden shadow-inner">
+                            <i className="fas fa-user-circle text-6xl"></i>
+                        </div>
+                        <h3 className="text-base font-bold text-white mb-4">User</h3>
+                        <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md rounded-full px-3 py-1.5 border border-white/25 shadow-sm" onClick={(e)=>e.stopPropagation()}>
+                            <input type="password" 
+                                   value={passwordInput} 
+                                   onChange={e => setPasswordInput(e.target.value)}
+                                   onKeyDown={e => { if(e.key === 'Enter') handleUnlock(); }}
+                                   placeholder="비밀번호 입력 (1234)" 
+                                   className="bg-transparent border-none outline-none text-white text-xs w-28 text-center placeholder-white/60" />
+                            <button onClick={handleUnlock} className="w-5 h-5 rounded-full bg-white/30 hover:bg-white/50 text-white flex items-center justify-center text-[10px] transition shadow-sm">
+                                <i className="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="text-[11px] text-white/60 font-semibold flex gap-6 z-10">
+                        <span className="cursor-pointer hover:text-white" onClick={() => setIsBooted(false)}>잠자기</span>
+                        <span className="cursor-pointer hover:text-white" onClick={() => { setIsBooted(false); setBootProgress(0); setShowingAuth(false); }}>재시동</span>
+                        <span className="cursor-pointer hover:text-white" onClick={() => { setIsBooted(false); setBootProgress(0); setShowingAuth(false); }}>시스템 종료</span>
+                    </div>
+                </div>
+            )}
+
+            {/* 메인 데스크탑 화면 */}
+            {isUnlocked && (
+                <>
+                    {/* 상단 툴바 */}
+                    <div className="h-[28px] bg-white/75 backdrop-blur-md w-full fixed top-0 flex items-center px-4 text-[13px] font-medium z-[5000] shadow-sm text-gray-800 border-b border-white/20">
+                        <div className="px-2 font-black italic cursor-default mr-2 flex items-center gap-1.5 text-blue-600"><i className="fas fa-layer-group"></i>Finder OS</div>
+                        <div className="px-2 font-bold cursor-default">{activeWinId === 'finder' ? 'Finder' : (activeWinId === 'notepad' ? '메모장' : (activeWinId === 'developer' ? 'App Store Developer' : (activeWinId === 'store' ? 'App Store' : 'Chrome')))}</div>
+                        <div className="px-2 hover:bg-black/5 rounded cursor-default">파일</div>
+                        <div className="px-2 hover:bg-black/5 rounded cursor-default">편집</div>
+                        <div className="px-2 hover:bg-black/5 rounded cursor-default">보기</div>
+                        <div className="px-2 hover:bg-black/5 rounded cursor-default">이동</div>
+                        <div className="px-2 font-semibold text-blue-600 cursor-pointer hover:bg-black/5 rounded flex items-center gap-1" onClick={() => { setIsRegisterMode(false); setLoginModalVisible(true); }}>
+                            {loggedInUser?.isAdmin ? <i className="fas fa-user-shield text-indigo-500"></i> : <i className="fas fa-user-circle"></i>}
+                            {loggedInUser ? `${loggedInUser.name}` : '로그인'}
+                        </div>
+                        <div className="ml-auto flex items-center gap-4">
+                            <span className="text-[11px] font-semibold text-green-600 flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse"></span>온라인
+                            </span>
+                            <i className="fas fa-wifi text-gray-700"></i>
+                            <span className="font-medium text-gray-700">{timeStr}</span>
+                        </div>
+                    </div>
+
+                    {/* 가상 윈도우 팝업들 */}
+                    <div className="desktop w-full h-full relative">
+
+                        {/* 1. Finder 윈도우 */}
+                        {openWindows.finder && (
+                            <div className="window absolute flex flex-col bg-white/95 backdrop-blur-xl border border-white/40 shadow-2xl rounded-xl overflow-hidden animate-fade-in" 
+                                 style={{ left: windowPos.finder.x, top: windowPos.finder.y, width: windowPos.finder.w, height: windowPos.finder.h, zIndex: windowZIndex.finder || 10 }}
+                                 onMouseDown={() => focusWindow('finder')}>
+                                <div className="window-header flex items-center px-4 py-3 shrink-0 bg-white/10 border-b border-black/5 relative" onMouseDown={(e) => handleHeaderMouseDown('finder', e)}>
+                                    
+                                    <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                        <button className="w-4 h-4 rounded-full bg-[#ff5f56] hover:bg-[#ff4238] flex items-center justify-center border border-red-600/30 shadow-md cursor-pointer active:scale-95 transition-all group" onClick={() => closeWindow('finder')}>
+                                            <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#ffbd2e] hover:bg-[#e0a216] flex items-center justify-center border border-yellow-600/30 shadow-md cursor-pointer active:scale-95 transition-all group" onClick={() => toggleMinimize('finder')}>
+                                            <i className="fas fa-minus opacity-0 group-hover:opacity-100 text-[8px] text-yellow-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#27c93f] hover:bg-[#1da130] flex items-center justify-center border border-green-600/30 shadow-md cursor-pointer active:scale-95 transition-all group" onClick={() => toggleMaximize('finder')}>
+                                            <i className="fas fa-expand opacity-0 group-hover:opacity-100 text-[8px] text-green-950 font-black"></i>
+                                        </button>
+                                        {/* 신호등 맨 오른쪽 창 스케일 버튼 (파란색) */}
+                                        <button className="w-4 h-4 rounded-full bg-[#007aff] hover:bg-[#005bb5] flex items-center justify-center border border-blue-600/30 shadow-md cursor-pointer active:scale-95 transition-all group" onClick={() => toggleScale('finder')} title="창 스케일 조절">
+                                            <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                        </button>
+                                    </div>
+                                    <span className="window-title absolute w-full left-0 text-center text-xs font-bold text-gray-800 pointer-events-none">Finder - 파일 탐색기</span>
+                                </div>
+                                <div className="window-content flex-1 flex bg-white/70">
+                                    <div className="finder-layout flex w-full h-full">
+                                        <div className="flex-1 p-5 grid grid-cols-[repeat(auto-fill,minmax(90px,1fr))] gap-6 content-start bg-white overflow-y-auto custom-scrollbar">
+                                            {/* 디스크 장치 */}
+                                            <div className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5" onContextMenu={(e) => handleContextMenu(e, 'hd')}>
+                                                <i className="fas fa-hard-drive text-blue-500 text-4xl"></i>
+                                                <span className="text-[11px] text-gray-800 max-w-[80px] truncate">Finder Disk</span>
+                                            </div>
+
+                                            {/* 기본 내장 앱들 */}
+                                            <div className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5" onClick={() => openApp('timetable')}>
+                                                <i className="fas fa-clock text-blue-500 text-4xl"></i>
+                                                <span className="text-[11px] text-gray-800 max-w-[80px] truncate font-semibold">컴시간알리미</span>
+                                            </div>
+                                            <div className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5" onClick={() => openApp('notepad')}>
+                                                <i className="fas fa-file-signature text-orange-400 text-4xl"></i>
+                                                <span className="text-[11px] text-gray-800 max-w-[80px] truncate">메모장</span>
+                                            </div>
+                                            <div className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5" onClick={() => openApp('developer')}>
+                                                <i className="fas fa-code text-indigo-500 text-4xl"></i>
+                                                <span className="text-[11px] text-gray-800 max-w-[80px] truncate">App Store Developer</span>
+                                            </div>
+                                            <div className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5" onClick={() => openApp('store')}>
+                                                <i className="fas fa-bag-shopping text-sky-500 text-4xl"></i>
+                                                <span className="text-[11px] text-gray-800 max-w-[80px] truncate">App Store</span>
+                                            </div>
+
+                                            {/* 동적 설치 및 배포된 앱 목록 렌더링 (파이어베이스 실시간 영구 연동) */}
+                                            {installedAppKeys.filter(k => !['finder', 'timetable', 'notepad', 'developer', 'store'].includes(k)).map(key => {
+                                                const app = deployedApps.find(a => a.key === key) || defaultStoreApps.find(a => a.key === key);
+                                                if (!app && key === 'chrome') {
+                                                    return (
+                                                        <div key="chrome" className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5" onClick={() => openApp('chrome')}>
+                                                            <img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Google_Chrome_icon_%28February_2022%29.svg" className="w-9 h-9 mb-0.5" alt="Chrome" />
+                                                            <span className="text-[11px] text-gray-800 max-w-[80px] truncate">Chrome</span>
+                                                        </div>
+                                                    );
+                                                }
+                                                if (!app) return null;
+                                                return (
+                                                    <div key={key} className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5 relative" onClick={() => openApp(key)} onContextMenu={(e) => handleContextMenu(e, key)}>
+                                                        <div className="relative">
+                                                            <i className={`fas ${app.icon} ${app.icon.includes('text-') ? '' : 'text-indigo-500'} text-4xl`}></i>
+                                                            {app.isOfficial && <i className="fas fa-check-circle text-blue-500 absolute -top-1 -right-1 bg-white rounded-full text-xs shadow-sm text-[10px]"></i>}
+                                                        </div>
+                                                        <span className="text-[11px] text-gray-800 max-w-[80px] truncate">{app.title}</span>
+                                                    </div>
+                                                );
+                                            })}
+
+                                            {/* 다운로드된 파일 목록 */}
+                                            {downloadedFiles.map(file => (
+                                                <div key={file.key} 
+                                                     className="file-item flex flex-col items-center gap-1.5 cursor-pointer text-center rounded-lg p-2 hover:bg-black/5 relative"
+                                                     onContextMenu={(e) => handleContextMenu(e, file.key)}>
+                                                    <div className="relative">
+                                                        <i className={`fas ${file.icon} text-4xl`}></i>
+                                                        {file.isOfficial && <i className="fas fa-check-circle text-blue-500 absolute -top-1 -right-1 bg-white rounded-full text-xs shadow-sm text-[10px]"></i>}
+                                                    </div>
+                                                    <span className="text-[11px] text-gray-800 max-w-[80px] truncate">{file.title}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* [추가] 2. 컴시간알리미 주간 시간표 윈도우 */}
+                        {openWindows.timetable && (
+                            <div className="window absolute flex flex-col bg-slate-50 border border-slate-300 shadow-2xl rounded-xl overflow-hidden"
+                                 style={{ left: windowPos.timetable.x, top: windowPos.timetable.y, width: windowPos.timetable.w, height: windowPos.timetable.h, zIndex: windowZIndex.timetable || 10 }}
+                                 onMouseDown={() => focusWindow('timetable')}>
+                                <div className="window-header flex items-center px-4 py-3 shrink-0 bg-slate-100 border-b border-slate-200 relative" onMouseDown={(e) => handleHeaderMouseDown('timetable', e)}>
+                                    <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                        <button className="w-4 h-4 rounded-full bg-[#ff5f56] hover:bg-[#ff4238] flex items-center justify-center border border-red-600/30 cursor-pointer active:scale-95 group" onClick={() => closeWindow('timetable')}>
+                                            <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#ffbd2e] hover:bg-[#e0a216] flex items-center justify-center border border-yellow-600/30 cursor-pointer active:scale-95 group" onClick={() => toggleMinimize('timetable')}>
+                                            <i className="fas fa-minus opacity-0 group-hover:opacity-100 text-[8px] text-yellow-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#27c93f] hover:bg-[#1da130] flex items-center justify-center border border-green-600/30 cursor-pointer active:scale-95 group" onClick={() => toggleMaximize('timetable')}>
+                                            <i className="fas fa-expand opacity-0 group-hover:opacity-100 text-[8px] text-green-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#007aff] hover:bg-[#005bb5] flex items-center justify-center border border-blue-600/30 cursor-pointer active:scale-95 group" onClick={() => toggleScale('timetable')} title="창 스케일 조절">
+                                            <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                        </button>
+                                    </div>
+                                    <span className="window-title absolute w-full left-0 text-center text-xs font-bold text-gray-800 pointer-events-none">⏰ 컴시간알리미 주간 시간표</span>
+                                </div>
+                                
+                                <div className="window-content flex-1 p-4 md:p-6 overflow-y-auto custom-scrollbar flex flex-col bg-white">
+                                    {/* 상태 인디케이터 */}
+                                    <div className="flex justify-between items-center mb-4 text-xs font-semibold">
+                                        <div className="flex items-center gap-1.5 text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
+                                            <span className={`w-2.5 h-2.5 rounded-full bg-${timeTableIndicatorColor}-500 animate-pulse`}></span>
+                                            <span>{timeTableStatus}</span>
+                                        </div>
+                                        <button onClick={handleOpenRegisterSchoolModal} className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-sm transition active:scale-95 flex items-center gap-1">
+                                            <i className="fas fa-plus"></i> 새 학교 등록
+                                        </button>
+                                    </div>
+
+                                    {/* 검색바 */}
+                                    <div className="flex gap-2 mb-4">
+                                        <input type="text" 
+                                               value={schoolSearchQuery}
+                                               onChange={e => setSchoolSearchQuery(e.target.value)}
+                                               onKeyDown={e => { if(e.key === 'Enter') handleSearchSchool(); }}
+                                               className="flex-1 px-4 py-2 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:outline-none text-xs text-gray-700"
+                                               placeholder="조회할 등록된 학교명을 입력하세요 (예: 위례중학교)" />
+                                        <button onClick={handleSearchSchool} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-sm transition active:scale-95">학교 검색</button>
+                                    </div>
+
+                                    {/* 안내 가이드 */}
+                                    <div className="text-center bg-slate-50 border border-slate-100 rounded-xl p-2.5 mb-4 text-[11px] text-slate-500 font-medium">
+                                        💡 <b>더블클릭 꿀팁:</b> 임의의 시간표 과목 칸을 <b>더블클릭</b>하면 과목을 바로 수정할 수 있습니다!
+                                    </div>
+
+                                    {/* 시간표 데이터 그리드 */}
+                                    {currentSelectedSchool && schoolsList[currentSelectedSchool] ? (
+                                        <div className="flex-1 flex flex-col">
+                                            <div className="text-center mb-3">
+                                                <h3 className="font-extrabold text-slate-700 text-sm">🏫 {currentSelectedSchool}</h3>
+                                            </div>
+                                            <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-sm">
+                                                <table className="w-full min-w-[500px] text-xs text-center border-collapse bg-white">
+                                                    <thead>
+                                                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                                                            <th className="p-3 border-r border-slate-200">교시</th>
+                                                            <th className="p-3 border-r border-slate-200">월</th>
+                                                            <th className="p-3 border-r border-slate-200">화</th>
+                                                            <th className="p-3 border-r border-slate-200">수</th>
+                                                            <th className="p-3 border-r border-slate-200">목</th>
+                                                            <th className="p-3">금</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-100">
+                                                        {schoolsList[currentSelectedSchool].map((row, rowIdx) => (
+                                                            <tr key={rowIdx} className="hover:bg-slate-50 transition">
+                                                                <td className="p-3 border-r border-slate-200 font-extrabold text-blue-500 bg-slate-50/50">{rowIdx + 1}</td>
+                                                                {row.map((cell, cellIdx) => (
+                                                                    <td key={cellIdx} 
+                                                                        onDoubleClick={() => handleOpenSubjectModal(rowIdx, cellIdx)}
+                                                                        className="p-3 border-r border-slate-100 font-semibold text-slate-700 cursor-pointer hover:bg-blue-50 select-none transition-colors">
+                                                                        {cell}
+                                                                    </td>
+                                                                ))}
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl py-12">
+                                            <i className="fas fa-school text-slate-300 text-4xl mb-3"></i>
+                                            <span className="text-xs text-slate-400 font-semibold">선택되거나 조회된 학교가 없습니다.</span>
+                                            <span className="text-[10px] text-slate-400 mt-1">상단에서 '위례중학교'를 검색하거나 새로 추가해 보세요.</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 3. 메모장 윈도우 */}
+                        {openWindows.notepad && (
+                            <div className="window absolute flex flex-col bg-white/95 backdrop-blur-xl border border-white/40 shadow-2xl rounded-xl overflow-hidden" 
+                                 style={{ left: windowPos.notepad.x, top: windowPos.notepad.y, width: windowPos.notepad.w, height: windowPos.notepad.h, zIndex: windowZIndex.notepad || 10 }}
+                                 onMouseDown={() => focusWindow('notepad')}>
+                                <div className="window-header flex items-center px-4 py-3 shrink-0 bg-white/10 border-b border-black/5 relative" onMouseDown={(e) => handleHeaderMouseDown('notepad', e)}>
+                                    <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                        <button className="w-4 h-4 rounded-full bg-[#ff5f56] flex items-center justify-center border border-red-600/30 cursor-pointer group" onClick={() => closeWindow('notepad')}>
+                                            <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#ffbd2e] flex items-center justify-center border border-yellow-600/30 cursor-pointer group" onClick={() => toggleMinimize('notepad')}>
+                                            <i className="fas fa-minus opacity-0 group-hover:opacity-100 text-[8px] text-yellow-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#27c93f] flex items-center justify-center border border-green-600/30 cursor-pointer group" onClick={() => toggleMaximize('notepad')}>
+                                            <i className="fas fa-expand opacity-0 group-hover:opacity-100 text-[8px] text-green-950 font-black"></i>
+                                        </button>
+                                        {/* 창 스케일 버튼 */}
+                                        <button className="w-4 h-4 rounded-full bg-[#007aff] flex items-center justify-center border border-blue-600/30 cursor-pointer group" onClick={() => toggleScale('notepad')} title="창 스케일 조절">
+                                            <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                        </button>
+                                    </div>
+                                    <span className="window-title absolute w-full left-0 text-center text-xs font-semibold text-gray-800 pointer-events-none">메모장</span>
+                                </div>
+                                <div className="window-content flex-1 flex flex-col bg-white">
+                                    <div className="bg-gray-100 p-2 border-b flex gap-2 shrink-0">
+                                        <button onClick={() => setSaveDialog({ visible: true, content: notepadText })} className="text-[11px] px-3 py-1 bg-white border rounded hover:bg-gray-50 shadow-sm font-semibold text-gray-700">파일 임시 저장</button>
+                                    </div>
+                                    <textarea value={notepadText} onChange={(e)=>setNotepadText(e.target.value)} className="flex-1 p-4 outline-none resize-none text-sm w-full text-gray-800 bg-white custom-scrollbar" placeholder="여기에 가상 텍스트를 기록하세요..."></textarea>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 4. App Store Developer */}
+                        {openWindows.developer && (
+                            <div className="window absolute flex flex-col bg-slate-900 text-slate-100 rounded-xl overflow-hidden" 
+                                 style={{ left: windowPos.developer.x, top: windowPos.developer.y, width: windowPos.developer.w, height: windowPos.developer.h, zIndex: windowZIndex.developer || 10 }}
+                                 onMouseDown={() => focusWindow('developer')}>
+                                <div className="window-header flex items-center px-4 py-3 border-b border-slate-800 bg-slate-950 shrink-0 relative" onMouseDown={(e) => handleHeaderMouseDown('developer', e)}>
+                                    <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                        <button className="w-4 h-4 rounded-full bg-[#ff5f56] flex items-center justify-center border border-red-600/30 cursor-pointer group" onClick={() => closeWindow('developer')}>
+                                            <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#ffbd2e] flex items-center justify-center border border-yellow-600/30 cursor-pointer group" onClick={() => toggleMinimize('developer')}>
+                                            <i className="fas fa-minus opacity-0 group-hover:opacity-100 text-[8px] text-yellow-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#27c93f] flex items-center justify-center border border-green-600/30 cursor-pointer group" onClick={() => toggleMaximize('developer')}>
+                                            <i className="fas fa-expand opacity-0 group-hover:opacity-100 text-[8px] text-green-950 font-black"></i>
+                                        </button>
+                                        {/* 창 스케일 버튼 */}
+                                        <button className="w-4 h-4 rounded-full bg-[#007aff] flex items-center justify-center border border-blue-600/30 cursor-pointer group" onClick={() => toggleScale('developer')} title="창 스케일 조절">
+                                            <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                        </button>
+                                    </div>
+                                    <span className="window-title absolute w-full left-0 text-center text-xs font-semibold text-slate-300 pointer-events-none">App Store Developer</span>
+                                </div>
+                                <div className="window-content flex-1 flex text-xs bg-slate-950 overflow-hidden">
+                                    <div className="w-1/2 p-4 flex flex-col gap-3 border-r border-slate-800 overflow-y-auto h-full dark-scrollbar">
+                                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                            <h4 className="font-bold text-sm text-indigo-400"><i className="fas fa-terminal mr-1"></i> {devExistingKey ? '🎨 업데이트 모드' : 'App Store Developer'}</h4>
+                                            <button onClick={() => {
+                                                setDevTitle(''); setDevCreator(loggedInUser.name); setDevDesc(''); setDevIcon('fa-gamepad'); setDevEditPassword(''); setDevCode(defaultGameTemplate); setDevExistingKey('');
+                                            }} className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-1 rounded text-white font-bold transition shadow"><i className="fas fa-plus"></i> 새 폼으로 만들기</button>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="block text-[10px] text-slate-400 font-bold mb-1">앱/게임 이름</label>
+                                                <input value={devTitle} onChange={e=>setDevTitle(e.target.value)} type="text" className="w-full p-1.5 rounded bg-slate-800 border border-slate-700 text-white outline-none" placeholder="예: 하늘에서 떨어지는 사과" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] text-slate-400 font-bold mb-1">개발자 이름</label>
+                                                <input value={devCreator} onChange={e=>setDevCreator(e.target.value)} type="text" className="w-full p-1.5 rounded bg-slate-800 border border-slate-700 text-white outline-none" placeholder={loggedInUser ? loggedInUser.name : '닉네임'} />
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="col-span-2">
+                                                <label className="block text-[10px] text-slate-400 font-bold mb-1">게임 요약 설명 (상세 스크롤 지원)</label>
+                                                <textarea value={devDesc} onChange={e=>setDevDesc(e.target.value)} className="w-full p-2 rounded bg-slate-800 border border-slate-700 text-white outline-none resize-none h-16 overflow-y-auto dark-scrollbar" placeholder="스토리, 조작 키 설명 등 상세한 내용을 적어주세요. (엔터 및 긴 글 지원)"></textarea>
+                                            </div>
+                                            <div className="col-span-2">
+                                                <label className="block text-[10px] text-slate-400 font-bold mb-1">아이콘 선택</label>
+                                                <select value={devIcon} onChange={e=>setDevIcon(e.target.value)} className="w-full p-1.5 rounded bg-slate-800 border border-slate-700 text-white outline-none">
+                                                    <option value="fa-gamepad">🎮 게임 패드</option>
+                                                    <option value="fa-puzzle-piece">🧩 퍼즐</option>
+                                                    <option value="fa-ghost">👻 고스트</option>
+                                                    <option value="fa-trophy">🏆 트로피</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div className="p-3 bg-indigo-950/40 border border-indigo-800/80 rounded-lg">
+                                            <label className="block text-[10px] text-indigo-300 font-bold mb-1"><i className="fas fa-key"></i> 앱 고유 수정 권한 비밀번호</label>
+                                            <input type="password" value={devEditPassword} onChange={e=>setDevEditPassword(e.target.value)} className="w-full p-1.5 rounded bg-slate-800 border border-indigo-800 text-white outline-none text-xs" placeholder="추후 코드를 수정할 때 사용됩니다." />
+                                        </div>
+
+                                        <div className="flex-grow flex flex-col min-h-[160px]">
+                                            <label className="block text-[10px] text-slate-400 font-bold mb-1">HTML/JS 소스 코드 작성</label>
+                                            <textarea value={devCode} onChange={e=>setDevCode(e.target.value)} className="w-full flex-grow p-2 rounded bg-slate-900 border border-slate-800 text-emerald-400 font-mono outline-none resize-none overflow-y-auto text-[11px] dark-scrollbar" spellCheck={false}></textarea>
+                                        </div>
+                                        <div className="flex gap-2 shrink-0">
+                                            <button onClick={()=>setPreviewKey(k=>k+1)} className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-lg"><i className="fas fa-play"></i> 프리뷰 컴파일</button>
+                                            <button onClick={handleDeployGame} className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-md"><i className="fas fa-cloud-arrow-up"></i> 배포(업데이트) 하기</button>
+                                        </div>
+                                    </div>
+                                    <div className="w-1/2 bg-slate-900 flex flex-col h-full shrink-0">
+                                        <div className="p-3 bg-slate-950 border-b border-slate-800 text-[10px] text-slate-400 font-bold shrink-0"><span><i className="fas fa-mobile-screen mr-1"></i> 가상 모바일 디바이스 프리뷰</span></div>
+                                        <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
+                                            <div className="w-[280px] h-[400px] bg-white rounded-xl border-4 border-slate-700 overflow-hidden shadow-2xl relative">
+                                                <iframe key={previewKey} srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><style>body,html{margin:0;padding:0;height:100%;overflow:hidden;}</style></head><body>${devCode}</body></html>`} className="w-full h-full border-none"></iframe>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 5. App Store 윈도우 */}
+                        {openWindows.store && (
+                            <div className="window absolute flex flex-col bg-white/95 backdrop-blur-xl border border-white/40 shadow-2xl rounded-xl overflow-hidden" 
+                                 style={{ left: windowPos.store.x, top: windowPos.store.y, width: windowPos.store.w, height: windowPos.store.h, zIndex: windowZIndex.store || 10 }}
+                                 onMouseDown={() => focusWindow('store')}>
+                                <div className="window-header flex items-center px-4 py-3 shrink-0 bg-white/10 border-b border-black/5 relative" onMouseDown={(e) => handleHeaderMouseDown('store', e)}>
+                                    <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                        <button className="w-4 h-4 rounded-full bg-[#ff5f56] flex items-center justify-center border border-red-600/30 cursor-pointer group" onClick={() => closeWindow('store')}>
+                                            <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#ffbd2e] flex items-center justify-center border border-yellow-600/30 cursor-pointer group" onClick={() => toggleMinimize('store')}>
+                                            <i className="fas fa-minus opacity-0 group-hover:opacity-100 text-[8px] text-yellow-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#27c93f] flex items-center justify-center border border-green-600/30 cursor-pointer group" onClick={() => toggleMaximize('store')}>
+                                            <i className="fas fa-expand opacity-0 group-hover:opacity-100 text-[8px] text-green-950 font-black"></i>
+                                        </button>
+                                        {/* 창 스케일 버튼 */}
+                                        <button className="w-4 h-4 rounded-full bg-[#007aff] flex items-center justify-center border border-blue-600/30 cursor-pointer group" onClick={() => toggleScale('store')} title="창 스케일 조절">
+                                            <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                        </button>
+                                    </div>
+                                    <span className="window-title absolute w-full left-0 text-center text-xs font-semibold text-gray-800 pointer-events-none">App Store</span>
+                                </div>
+                                <div className="window-content flex-1 flex flex-col p-5 bg-slate-50 overflow-hidden">
+                                    <div className="mb-4 shrink-0">
+                                        <h4 className="font-bold text-base text-gray-800"><i className="fas fa-bag-shopping text-blue-500 mr-1.5"></i>Finder App Store</h4>
+                                        <p className="text-[10px] text-gray-400">사용자들이 개발하고 실시간 배포한 고성능 인디 게임 마켓플레이스입니다.</p>
+                                    </div>
+                                    {/* App Store 상세 영역 스크롤 기능 추가 */}
+                                    <div className="flex-1 overflow-y-auto grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4 content-start pr-2 custom-scrollbar">
+                                        {defaultStoreApps.map(app => (
+                                            <div key={app.key} className="p-4 bg-white border border-gray-100 rounded-xl shadow-sm flex flex-col justify-between">
+                                                <div className="flex items-center gap-3 mb-2">
+                                                    <div className="w-11 h-11 rounded-lg bg-sky-500 flex items-center justify-center text-white text-lg shadow-sm"><i className={`fas ${app.icon}`}></i></div>
+                                                    <div>
+                                                        <h5 className="font-bold text-xs text-gray-800 flex items-center gap-1">{app.title} <i className="fas fa-check-circle text-blue-500 text-[9px]" title="공식 앱"></i></h5>
+                                                        <p className="text-[9px] text-gray-400">Finder OS 기본 탑재</p>
+                                                    </div>
+                                                </div>
+                                                <p className="text-[10px] text-gray-500 mb-3 h-8 overflow-hidden leading-snug">{app.desc}</p>
+                                                {installedAppKeys.includes(app.key) ? (
+                                                    <button onClick={() => openApp(app.key)} className="w-full py-1.5 rounded-lg text-[10px] font-bold bg-green-500 hover:bg-green-600 text-white transition shadow-sm">열기 (실행)</button>
+                                                ) : (
+                                                    <button onClick={() => installApp(app)} className="w-full py-1.5 rounded-lg text-[10px] font-bold bg-blue-500 hover:bg-blue-600 text-white transition">설치</button>
+                                                )}
+                                            </div>
+                                        ))}
+                                        {deployedApps.map(app => (
+                                            <div key={app.key} className="p-4 bg-indigo-50/50 border border-indigo-100 rounded-xl shadow-sm flex flex-col justify-between"
+                                                 onContextMenu={(e) => handleContextMenu(e, app.key)}>
+                                                <div className="flex items-center gap-3 mb-2">
+                                                    <div className="w-11 h-11 rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center text-white text-xl shadow-sm"><i className={`fas ${app.icon || 'fa-gamepad'}`}></i></div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <h5 className="font-bold text-xs text-gray-800 flex items-center gap-1 truncate">
+                                                            {app.title} 
+                                                            {app.isOfficial && <i className="fas fa-check-circle text-blue-500 text-[10px]" title="공식 인증 앱"></i>}
+                                                        </h5>
+                                                        <p className="text-[9px] text-gray-400 truncate font-semibold">개발자: {app.creator}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-[10px] text-gray-500 mb-3 h-10 overflow-y-auto leading-snug pr-1 custom-scrollbar">{app.desc}</div>
+                                                <div className="flex gap-2">
+                                                    {installedAppKeys.includes(app.key) ? (
+                                                        <button onClick={() => openApp(app.key)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold bg-green-500 hover:bg-green-600 text-white transition shadow-sm">열기 (실행)</button>
+                                                    ) : (
+                                                        <button onClick={() => installApp(app)} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition">게임 설치</button>
+                                                    )}
+                                                    <button onClick={() => handleEditDeployedApp(app)} className="px-2.5 py-1.5 bg-white border border-indigo-200 hover:bg-indigo-50 rounded-lg text-[10px] font-bold text-indigo-700 shadow-sm transition">
+                                                        수정
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 6. Chrome 브라우저 */}
+                        {openWindows.chrome && (
+                            <div className="window absolute flex flex-col bg-white/95 backdrop-blur-xl border border-white/40 shadow-2xl rounded-xl overflow-hidden" 
+                                 style={{ left: windowPos.chrome.x, top: windowPos.chrome.y, width: windowPos.chrome.w, height: windowPos.chrome.h, zIndex: windowZIndex.chrome || 10 }}
+                                 onMouseDown={() => focusWindow('chrome')}>
+                                <div className="window-header flex items-center px-4 py-3 shrink-0 bg-white/10 border-b border-black/5 relative" onMouseDown={(e) => handleHeaderMouseDown('chrome', e)}>
+                                    <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                        <button className="w-4 h-4 rounded-full bg-[#ff5f56] flex items-center justify-center border border-red-600/30 cursor-pointer group" onClick={() => closeWindow('chrome')}>
+                                            <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#ffbd2e] flex items-center justify-center border border-yellow-600/30 cursor-pointer group" onClick={() => toggleMinimize('chrome')}>
+                                            <i className="fas fa-minus opacity-0 group-hover:opacity-100 text-[8px] text-yellow-950 font-black"></i>
+                                        </button>
+                                        <button className="w-4 h-4 rounded-full bg-[#27c93f] flex items-center justify-center border border-green-600/30 cursor-pointer group" onClick={() => toggleMaximize('chrome')}>
+                                            <i className="fas fa-expand opacity-0 group-hover:opacity-100 text-[8px] text-green-950 font-black"></i>
+                                        </button>
+                                        {/* 창 스케일 버튼 */}
+                                        <button className="w-4 h-4 rounded-full bg-[#007aff] flex items-center justify-center border border-blue-600/30 cursor-pointer group" onClick={() => toggleScale('chrome')} title="창 스케일 조절">
+                                            <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                        </button>
+                                    </div>
+                                    <span className="window-title absolute w-full left-0 text-center text-xs font-semibold text-gray-800 pointer-events-none">Chrome 브라우저</span>
+                                </div>
+                                <div className="window-content flex-1 flex flex-col bg-white">
+                                    <div className="flex items-center gap-2 p-1.5 bg-gray-100 border-b shrink-0">
+                                        <input value={chromeInput} onChange={e=>setChromeInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') setChromeUrl(chromeInput.includes('.') ? (chromeInput.startsWith('http')?chromeInput:'https://'+chromeInput) : `https://www.google.com/search?igu=1&q=${chromeInput}`)}} className="flex-1 border rounded-full px-3 py-1 text-xs outline-blue-400 text-gray-800" placeholder="URL 또는 검색어 입력 후 Enter" />
+                                    </div>
+                                    <iframe src={chromeUrl} className="w-full h-full border-none bg-white"></iframe>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 동적 사용자 배포 앱 런타임 마운트 (드래그 좌표 연동 및 스케일 개선) */}
+                        {installedAppKeys.filter(key => !['finder', 'timetable', 'notepad', 'developer', 'store', 'chrome'].includes(key)).map(key => {
+                            const app = deployedApps.find(a => a.key === key) || defaultStoreApps.find(a => a.key === key);
+                            if (!app || !openWindows[key]) return null;
+                            
+                            const currentX = windowPos[key]?.x ?? 140;
+                            const currentY = windowPos[key]?.y ?? 110;
+                            const currentW = windowPos[key]?.w ?? 450;
+                            const currentH = windowPos[key]?.h ?? 500;
+
+                            return (
+                                <div key={key} className="window absolute flex flex-col bg-black border border-slate-700 shadow-2xl rounded-xl overflow-hidden" 
+                                     style={{ 
+                                         left: currentX, 
+                                         top: currentY, 
+                                         width: currentW, 
+                                         height: currentH, 
+                                         zIndex: windowZIndex[key] || 20 
+                                     }}
+                                     onMouseDown={() => focusWindow(key)}>
+                                    <div className="window-header flex items-center px-4 py-3 bg-slate-900 border-b border-slate-800 shrink-0 relative" 
+                                         onMouseDown={(e) => handleHeaderMouseDown(key, e)}>
+                                        <div className="traffic-lights flex gap-2.5 shrink-0 z-50">
+                                            <button className="w-4 h-4 rounded-full bg-[#ff5f56] hover:bg-[#ff4238] flex items-center justify-center border border-red-600/30 cursor-pointer group" onClick={() => closeWindow(key)}>
+                                                <i className="fas fa-times opacity-0 group-hover:opacity-100 text-[8px] text-red-950 font-black"></i>
+                                            </button>
+                                            {/* 임의 앱에도 스케일 버튼 추가 */}
+                                            <button className="w-4 h-4 rounded-full bg-[#007aff] hover:bg-[#005bb5] flex items-center justify-center border border-blue-600/30 cursor-pointer group" onClick={() => toggleScale(key)} title="창 스케일 조절">
+                                                <i className="fas fa-search-plus opacity-0 group-hover:opacity-100 text-[8px] text-blue-100 font-black"></i>
+                                            </button>
+                                        </div>
+                                        <span className="window-title absolute w-full left-0 text-center text-xs font-semibold text-slate-300 pointer-events-none">{app.title}</span>
+                                        {/* 커스텀 앱 헤더에 바로가기 수정(Edit) 아이콘 추가 */}
+                                        <button onClick={() => handleEditDeployedApp(app)} className="absolute right-4 text-slate-400 hover:text-white transition-colors" title="이 앱 수정하기">
+                                            <i className="fas fa-pen-to-square"></i>
+                                        </button>
+                                    </div>
+                                    <div className="window-content flex-1 bg-white relative">
+                                        <iframe key={app.rawCode ? app.rawCode.length + app.title : key} srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><script src="https://cdn.tailwindcss.com"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"><style>body,html{margin:0;padding:0;height:100%;overflow:hidden;}</style></head><body>${app.rawCode || app.content}</body></html>`} className="w-full h-full border-none"></iframe>
+                                    </div>
+                                </div>
+                            );
+                        })}
+
+                    </div>
+
+                    {/* 하단 시스템 Dock */}
+                    <div className="dock-container fixed bottom-3 w-full flex justify-center z-[4000]">
+                        <div className="dock bg-white/25 backdrop-blur-xl px-4 py-2 rounded-2xl flex items-end gap-3 border border-white/30 shadow-lg h-[64px]">
+                            <div className="dock-item w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center cursor-pointer transition-transform hover:-translate-y-2 hover:scale-110 shadow" onClick={() => openApp('finder')}>
+                                <i className="fas fa-face-smile text-blue-500 text-2xl"></i>
+                            </div>
+                            <div className="dock-item w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center cursor-pointer transition-transform hover:-translate-y-2 hover:scale-110 shadow" onClick={() => openApp('timetable')}>
+                                <i className="fas fa-clock text-blue-600 text-2xl"></i>
+                            </div>
+                            <div className="dock-item w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center cursor-pointer transition-transform hover:-translate-y-2 hover:scale-110 shadow" onClick={() => openApp('notepad')}>
+                                <i className="fas fa-file-signature text-orange-400 text-2xl"></i>
+                            </div>
+                            <div className="dock-item w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center cursor-pointer transition-transform hover:-translate-y-2 hover:scale-110 shadow" onClick={() => openApp('developer')}>
+                                <i className="fas fa-code text-indigo-500 text-2xl"></i>
+                            </div>
+                            <div className="dock-item w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center cursor-pointer transition-transform hover:-translate-y-2 hover:scale-110 shadow" onClick={() => openApp('store')}>
+                                <i className="fas fa-bag-shopping text-sky-500 text-2xl"></i>
+                            </div>
+                            <div className="dock-item w-12 h-12 bg-white/80 rounded-xl flex items-center justify-center cursor-pointer transition-transform hover:-translate-y-2 hover:scale-110 shadow" onClick={() => openApp('chrome')}>
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Google_Chrome_icon_%28February_2022%29.svg" className="w-8" alt="Chrome" />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 아름답게 다듬어진 우클릭 커스텀 플로팅 메뉴 바 */}
+                    {contextMenu.visible && (
+                        <div className="fixed bg-white/85 backdrop-blur-xl border border-white/50 rounded-xl shadow-[0_10px_35px_rgba(0,0,0,0.3)] py-1.5 w-[210px] z-[99999] flex flex-col pointer-events-auto"
+                             style={{ left: contextMenu.x, top: contextMenu.y }}
+                             onClick={(e)=>e.stopPropagation()}
+                             onContextMenu={(e)=>{e.preventDefault(); e.stopPropagation();}}>
+                            
+                            <div className="px-1.5 py-0.5">
+                                <button className="w-full px-3 py-1.5 text-left text-xs font-semibold text-gray-800 hover:bg-blue-500 hover:text-white rounded-md transition-colors" onClick={() => {
+                                    const target = downloadedFiles.find(f => f.key === contextMenu.fileKey);
+                                    if(target) triggerNotification(`"${target.title}" 파일을 가상 환경에서 엽니다.`);
+                                    setContextMenu({ visible: false, x: 0, y: 0, fileKey: null });
+                                }}>
+                                    가상 파일 열기
+                                </button>
+                            </div>
+                            
+                            <div className="px-1.5 py-0.5">
+                                <button className="w-full px-3 py-1.5 text-left text-xs font-semibold text-gray-800 hover:bg-blue-500 hover:text-white rounded-md transition-colors" onClick={handleMarkOfficialInit}>
+                                    공식 앱으로 지정
+                                </button>
+                            </div>
+
+                            <div className="h-[1px] bg-gray-200/80 my-1 mx-3"></div>
+
+                            <div className="px-1.5 py-0.5">
+                                <button className="w-full px-3 py-1.5 text-left text-xs font-semibold text-red-600 hover:bg-red-500 hover:text-white rounded-md transition-colors" onClick={() => {
+                                    deleteFile(contextMenu.fileKey);
+                                    setContextMenu({ visible: false, x: 0, y: 0, fileKey: null });
+                                }}>
+                                    휴지통으로 이동
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* 배포된 앱 수정 권한 인증 모달 (프롬프트 대체용) */}
+            {editAuthModal.visible && (
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[20000] flex items-center justify-center">
+                    <div className="bg-white/95 backdrop-blur-md w-[320px] rounded-xl shadow-2xl border border-black/10 overflow-hidden">
+                        <div className="p-4 border-b bg-gray-50 flex items-center gap-3">
+                            <i className="fas fa-lock text-indigo-500 text-xl"></i>
+                            <span className="font-bold text-sm text-gray-800">앱 수정 인증</span>
+                        </div>
+                        <div className="p-5">
+                            <p className="text-[11px] text-gray-600 mb-4">
+                                "{editAuthModal.appData?.title}" 앱의 코드를 수정하기 위해 배포 시 지정한 비밀번호를 입력해 주세요.
+                            </p>
+                            <input 
+                                type="password" 
+                                value={editAuthModal.pwdInput}
+                                onChange={e => setEditAuthModal(prev => ({ ...prev, pwdInput: e.target.value }))}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                        if (editAuthModal.pwdInput === editAuthModal.appData?.editPassword) {
+                                            openApp('developer', editAuthModal.appData);
+                                            triggerNotification("소스 코드를 샌드박스에 정상적으로 로드했습니다.");
+                                            setEditAuthModal({ visible: false, appData: null, pwdInput: '' });
+                                        } else {
+                                            setAlertData({ title: "인증 실패", msg: "비밀번호가 일치하지 않아 수정 권한을 부여할 수 없습니다." });
+                                        }
+                                    }
+                                }}
+                                className="w-full border rounded-md p-2 text-sm outline-indigo-500 bg-white text-gray-800" 
+                                placeholder="비밀번호" 
+                                autoFocus
+                            />
+                        </div>
+                        <div className="bg-gray-50 p-3 flex justify-end gap-2 border-t">
+                            <button onClick={() => setEditAuthModal({ visible: false, appData: null, pwdInput: '' })} className="px-4 py-1.5 text-xs border rounded-md hover:bg-gray-100 font-semibold text-gray-700">취소</button>
+                            <button onClick={() => {
+                                if (editAuthModal.pwdInput === editAuthModal.appData?.editPassword) {
+                                    openApp('developer', editAuthModal.appData);
+                                    triggerNotification("소스 코드를 샌드박스에 정상적으로 로드했습니다.");
+                                    setEditAuthModal({ visible: false, appData: null, pwdInput: '' });
+                                } else {
+                                    setAlertData({ title: "인증 실패", msg: "비밀번호가 일치하지 않아 수정 권한을 부여할 수 없습니다." });
+                                }
+                            }} className="px-4 py-1.5 text-xs bg-indigo-500 text-white rounded-md hover:bg-indigo-600 font-semibold shadow-sm">확인</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 컴시간알리미 새 학교 등록 모달 */}
+            {isRegisterSchoolModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[20000] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl overflow-y-auto max-h-[85vh] custom-scrollbar text-gray-800">
+                        <div className="flex justify-between items-center mb-4 border-b pb-2">
+                            <h3 className="text-base font-bold text-slate-800">🏫 새 학교 주간 시간표 등록</h3>
+                            <button onClick={() => setIsRegisterSchoolModal(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">학교 이름 <span className="text-red-500">*</span></label>
+                                <input type="text" 
+                                       value={newSchoolName} 
+                                       onChange={e => setNewSchoolName(e.target.value)}
+                                       className="w-full px-3 py-2 border rounded-lg text-xs font-semibold focus:border-emerald-500 focus:outline-none" 
+                                       placeholder="예: 위례중학교" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-2">요일별 시간표 구성 (7교시)</label>
+                                <div className="overflow-x-auto border border-slate-200 rounded-lg custom-scrollbar">
+                                    <table className="w-full min-w-[450px] text-xs text-center border-collapse">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
+                                                <th className="p-2 border-r border-slate-200 w-[10%]">교시</th>
+                                                <th className="p-2 border-r border-slate-200 w-[18%]">월</th>
+                                                <th className="p-2 border-r border-slate-200 w-[18%]">화</th>
+                                                <th className="p-2 border-r border-slate-200 w-[18%]">수</th>
+                                                <th className="p-2 border-r border-slate-200 w-[18%]">목</th>
+                                                <th className="p-2 w-[18%]">금</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {Array(7).fill(null).map((_, rIdx) => (
+                                                <tr key={rIdx}>
+                                                    <td className="p-2 border-r border-slate-200 font-bold text-slate-500 bg-slate-50/50">{rIdx + 1}</td>
+                                                    {Array(5).fill(null).map((_, cIdx) => (
+                                                        <td key={cIdx} className="p-1 border-r border-slate-100">
+                                                            <input type="text" 
+                                                                   value={newSchoolGrid[rIdx][cIdx]}
+                                                                   onChange={e => handleGridCellChange(rIdx, cIdx, e.target.value)}
+                                                                   className="w-full p-1 border rounded focus:border-emerald-500 focus:outline-none text-center font-semibold text-xs" />
+                                                        </td>
+                                                    ))}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex gap-2 mt-6 border-t pt-4">
+                            <button onClick={() => setIsRegisterSchoolModal(false)} className="flex-grow py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs">취소</button>
+                            <button onClick={handleSubmitNewSchool} className="flex-grow py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow">등록 완료</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 컴시간알리미 과목 상세 변경 모달 */}
+            {subjectModalOpen && (
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[20000] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl text-gray-800">
+                        <div className="flex justify-between items-center mb-3 border-b pb-2">
+                            <h3 className="text-sm font-extrabold text-slate-800">📖 과목 내용 변경</h3>
+                            <button onClick={() => setSubjectModalOpen(false)} className="text-slate-400 hover:text-slate-600 font-bold text-lg">&times;</button>
+                        </div>
+                        
+                        <div className="mb-4">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mb-2">원터치 퀵 선택 리스트</span>
+                            <div className="grid grid-cols-4 gap-1.5 max-h-[140px] overflow-y-auto custom-scrollbar p-1.5 bg-slate-50 border rounded-xl">
+                                {["국어", "수학", "영어", "과학", "사회", "역사", "체육", "음악", "미술", "정보", "도덕", "기가", "진로", "창체", "한문", "동아리"].map((sub) => (
+                                    <button key={sub} 
+                                            onClick={() => {
+                                                setCustomSubjectInput(sub);
+                                                // 클릭 즉시 입력 완료 처리
+                                                setSchoolsList(prev => {
+                                                    const updated = prev[currentSelectedSchool].map((row, rIdx) => {
+                                                        if (rIdx !== currentCellInfo.r) return row;
+                                                        return row.map((cell, cIdx) => cIdx === currentCellInfo.c ? sub : cell);
+                                                    });
+                                                    // 비동기 파이어베이스 저장 연동
+                                                    if (user) {
+                                                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'schools', currentSelectedSchool);
+                                                        setDoc(docRef, { timetable: JSON.stringify(updated) });
+                                                    }
+                                                    return { ...prev, [currentSelectedSchool]: updated };
+                                                });
+                                                setSubjectModalOpen(false);
+                                                triggerNotification("시간표 과목 수정 완료!");
+                                            }}
+                                            className="py-1.5 bg-white hover:bg-blue-500 hover:text-white border border-slate-200 rounded-md text-[10px] font-bold transition">
+                                        {sub}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase">직접 과목명 기재</label>
+                            <input type="text" 
+                                   value={customSubjectInput}
+                                   onChange={e => setCustomSubjectInput(e.target.value)}
+                                   className="w-full border rounded-lg p-2 text-xs font-semibold focus:border-blue-500 focus:outline-none" 
+                                   placeholder="과목 직접 입력 (예: 물리)" />
+                        </div>
+
+                        <div className="flex gap-2 mt-5">
+                            <button onClick={() => setSubjectModalOpen(false)} className="flex-1 py-2 bg-slate-100 text-slate-600 hover:bg-slate-200 rounded-xl text-xs font-bold">취소</button>
+                            <button onClick={handleSaveCellChanges} className="flex-1 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl text-xs font-bold shadow">변경 완료</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 실시간 알림 팝업 토스트 */}
+            <div className={`fixed top-12 w-[330px] bg-white/85 backdrop-blur-xl border border-black/10 rounded-xl shadow-xl p-3.5 z-[10000] flex gap-3 items-start transition-all duration-500 ${notification ? 'right-5' : '-right-[400px]'}`}>
+                <div className="p-1 bg-gradient-to-tr from-cyan-500 to-blue-500 rounded-lg text-white text-xs flex items-center justify-center w-7 h-7 shrink-0">
+                    <i className="fas fa-circle-check"></i>
+                </div>
+                <div className="flex-1">
+                    <div className="text-xs font-bold text-gray-800 flex justify-between"><span>Finder OS 시스템</span><span className="text-[10px] text-gray-400 font-normal">방금</span></div>
+                    <p className="text-[11px] text-gray-600 mt-1 leading-snug">{notification}</p>
+                </div>
+            </div>
+
+            {/* 가상 디바이스 파일 저장 유도 모달 */}
+            {saveDialog.visible && (
+                <div className="fixed inset-0 bg-black/35 z-[15000] flex items-center justify-center">
+                    <div className="bg-white/95 backdrop-blur-md w-[360px] rounded-xl shadow-2xl border border-black/10 overflow-hidden">
+                        <div className="p-4 border-b bg-gray-50 flex items-center gap-3">
+                            <i className="fas fa-file-export text-blue-500 text-xl"></i>
+                            <span className="font-bold text-sm text-gray-800">Finder 가상 디스크 보관</span>
+                        </div>
+                        <div className="p-5">
+                            <label className="block text-xs font-semibold text-gray-500 mb-2">가상 저장 파일 이름</label>
+                            <input type="text" id="save-filename-input" className="w-full border rounded-md p-2 text-sm outline-blue-500 bg-white" placeholder="note.txt" />
+                        </div>
+                        <div className="bg-gray-50 p-3 flex justify-end gap-2 border-t">
+                            <button onClick={() => setSaveDialog({ visible: false, content: '' })} className="px-4 py-1.5 text-xs border rounded-md hover:bg-gray-100">취소</button>
+                            <button onClick={() => {
+                                const input = document.getElementById('save-filename-input').value.trim();
+                                if(!input) return;
+                                setDownloadedFiles(prev => [
+                                    ...prev,
+                                    {
+                                        key: 'file_' + Date.now(),
+                                        title: input,
+                                        content: saveDialog.content,
+                                        type: 'document',
+                                        icon: 'fa-file-lines text-blue-400',
+                                        isOfficial: false
+                                    }
+                                ]);
+                                setSaveDialog({ visible: false, content: '' });
+                                triggerNotification(`문서 "${input}"이 가상 다운로드 드라이브에 안전하게 기록되었습니다.`);
+                            }} className="px-4 py-1.5 text-xs bg-blue-500 text-white rounded-md hover:bg-blue-600 font-semibold">저장</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 로그인 및 회원가입 전용 가상 통합 창 모달 */}
+            {loginModalVisible && (
+                <div className="fixed inset-0 bg-black/55 backdrop-blur-md z-[12000] flex items-center justify-center">
+                    <div className="bg-white/95 backdrop-blur-xl w-[340px] rounded-2xl p-6 shadow-2xl border border-white/20 text-gray-800 transition-all duration-300">
+                        <div className="text-center mb-6">
+                            <div className="w-14 h-14 bg-gradient-to-tr from-blue-500 to-indigo-600 text-white rounded-full flex items-center justify-center text-2xl mx-auto shadow-md mb-2">
+                                <i className="fas fa-lock"></i>
+                            </div>
+                            <h3 className="font-bold text-lg">{isRegisterMode ? '새 계정 생성 (Sign Up)' : '가상 계정 로그인'}</h3>
+                            <p className="text-[10px] text-gray-400 mt-1">Finder OS 가상 안심 클라우드 서비스</p>
+                        </div>
+
+                        {!isRegisterMode ? (
+                            /* 로그인 폼 */
+                            <form onSubmit={handleLoginSubmit} className="space-y-4">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">사용자 아이디</label>
+                                    <input type="text" value={loginId} onChange={e=>setLoginId(e.target.value)} className="w-full border rounded-lg p-2.5 text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition text-gray-800" placeholder="아이디 입력" required />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">비밀번호</label>
+                                    <input type="password" value={loginPw} onChange={e=>setLoginPw(e.target.value)} className="w-full border rounded-lg p-2.5 text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500 transition text-gray-800" placeholder="••••" required />
+                                </div>
+                                <button type="submit" className="w-full py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold rounded-lg shadow transition">안전하게 로그인</button>
+                                <div className="text-center pt-2">
+                                    <span className="text-[10px] text-gray-400">아직 계정이 없으신가요? </span>
+                                    <button type="button" onClick={() => { setIsRegisterMode(true); setLoginId(''); setLoginPw(''); }} className="text-[10px] text-blue-500 font-bold hover:underline">회원가입하기</button>
+                                </div>
+                            </form>
+                        ) : (
+                            /* 회원가입 폼 */
+                            <form onSubmit={handleRegisterSubmit} className="space-y-4">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">새 사용자 아이디</label>
+                                    <input type="text" value={loginId} onChange={e=>setLoginId(e.target.value)} className="w-full border rounded-lg p-2.5 text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500 transition text-gray-800" placeholder="예: user12" required />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">닉네임 / 성함</label>
+                                    <input type="text" value={loginName} onChange={e=>setLoginName(e.target.value)} className="w-full border rounded-lg p-2.5 text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500 transition text-gray-800" placeholder="예: 홍길동" required />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">새 비밀번호</label>
+                                    <input type="password" value={loginPw} onChange={e=>setLoginPw(e.target.value)} className="w-full border rounded-lg p-2.5 text-xs bg-gray-50 outline-none focus:ring-2 focus:ring-indigo-500 transition text-gray-800" placeholder="••••" required />
+                                </div>
+                                <button type="submit" className="w-full py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg shadow transition">새 회원가입 완료</button>
+                                <div className="text-center pt-2">
+                                    <span className="text-[10px] text-gray-400">이미 계정이 있으신가요? </span>
+                                    <button type="button" onClick={() => { setIsRegisterMode(false); setLoginId(''); setLoginPw(''); }} className="text-[10px] text-indigo-500 font-bold hover:underline">로그인 페이지로</button>
+                                </div>
+                            </form>
+                        )}
+
+                        <button onClick={() => setLoginModalVisible(false)} className="w-full mt-2 py-2 text-gray-400 hover:text-gray-600 text-[10px] font-medium tracking-wide">닫기</button>
+                    </div>
+                </div>
+            )}
+
+            {/* 관리자 계정 인증 전용 레이아웃 모달 */}
+            {adminAuthModal.visible && (
+                <div className="fixed inset-0 bg-black/65 backdrop-blur-sm z-[13000] flex items-center justify-center">
+                    <div className="bg-slate-900 border border-slate-700/80 w-[320px] rounded-2xl p-6 shadow-2xl text-slate-100">
+                        <div className="text-center mb-5">
+                            <i className="fas fa-user-shield text-indigo-400 text-4xl mb-2"></i>
+                            <h3 className="font-bold text-sm">시스템 관리자 인증 (Administrator)</h3>
+                            <p className="text-[9px] text-slate-400 mt-1">공식 인증 배지 발급을 위해 관리자 권한을 승인해 주세요.</p>
+                        </div>
+                        <form onSubmit={handleAdminLoginSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">관리자 아이디</label>
+                                <input type="text" value={adminIdInput} onChange={e=>setAdminIdInput(e.target.value)} className="w-full p-2 rounded bg-slate-800 border border-slate-700 text-xs text-white outline-none focus:border-indigo-500" placeholder="관리자 아이디 입력" required />
+                            </div>
+                            <div>
+                                <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">비밀번호</label>
+                                <input type="password" value={adminPwInput} onChange={e=>setAdminPwInput(e.target.value)} className="w-full p-2 rounded bg-slate-800 border border-slate-700 text-xs text-white outline-none focus:border-indigo-500" placeholder="••••••••" required />
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                                <button type="button" onClick={() => setAdminAuthModal({ visible: false, targetKey: null })} className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded">취소</button>
+                                <button type="submit" className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-xs font-bold rounded">인증 요청</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* 가상 경고 피드백 모달 */}
+            {alertData && (
+                <div className="fixed inset-0 bg-black/35 z-[21000] flex items-center justify-center">
+                    <div className="bg-white/95 backdrop-blur-md w-[320px] rounded-xl p-5 shadow-2xl border border-black/10 text-center">
+                        <div className="text-3xl text-blue-500 mb-2"><i className="fas fa-info-circle"></i></div>
+                        <h4 className="font-bold text-sm text-gray-800 mb-2">{alertData.title}</h4>
+                        <p className="text-xs text-gray-600 mb-5 leading-relaxed">{alertData.msg}</p>
+                        <button onClick={closeAlert} className="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold">확인</button>
+                    </div>
+                </div>
+            )}
+
+        </div>
+    );
+}
